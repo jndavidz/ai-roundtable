@@ -1,0 +1,25 @@
+# Private documentation (not for GitHub)
+CLAUDE.md
+AGENTS.md
+DEVELOPMENT_LOG.md
+SOFTWARE_DESIGN.md
+
+# Claude Code local config
+.claude/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node (if added later)
+node_modules/
+
+# Build artifacts
+*.zip

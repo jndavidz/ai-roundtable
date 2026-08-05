@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 圆桌 - 分屏视图</title>
+  <link rel="stylesheet" href="splitview.css">
+</head>
+<body>
+  <div class="sv-toolbar">
+    <div class="sv-title">
+      <span class="sv-badge" id="sv-phase-badge">等待中</span>
+      <span class="sv-round" id="sv-round-display"></span>
+      <span class="sv-topic" id="sv-topic-display"></span>
+    </div>
+    <div class="sv-controls">
+      <span class="sv-live-dot" id="sv-live-dot"></span>
+      <span class="sv-live-text">实时</span>
+      <button id="sv-refresh-btn" class="sv-btn" title="手动刷新">刷新</button>
+    </div>
+  </div>
+
+  <div class="sv-grid" id="sv-grid">
+    <!-- 4 panels populated dynamically by splitview.js -->
+  </div>
+
+  <script src="splitview.js"></script>
+</body>
+</html>

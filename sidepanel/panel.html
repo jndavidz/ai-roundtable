@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Panel</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>AI 圆桌</h1>
+      <p class="subtitle">Multi-AI Roundtable</p>
+    </header>
+
+    <!-- Mode Switcher -->
+    <section class="mode-switcher">
+      <button class="mode-btn active" id="mode-normal">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        普通
+      </button>
+      <button class="mode-btn" id="mode-discussion">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+          <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+        讨论
+      </button>
+      <button class="mode-btn" id="mode-persona-debate">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+        </svg>
+        辩论
+      </button>
+    </section>
+
+    <!-- Normal Mode Content -->
+    <div id="normal-mode">
+      <section class="targets">
+      <label class="target-label">
+        <input type="checkbox" id="target-claude" checked>
+        <span class="target-name claude">Claude</span>
+        <span class="status" id="status-claude"></span>
+      </label>
+      <label class="target-label">
+        <input type="checkbox" id="target-chatgpt" checked>
+        <span class="target-name chatgpt">ChatGPT</span>
+        <span class="status" id="status-chatgpt"></span>
+      </label>
+      <label class="target-label">
+        <input type="checkbox" id="target-grok">
+        <span class="target-name grok">Grok</span>
+        <span class="status" id="status-grok"></span>
+      </label>
+      <label class="target-label">
+        <input type="checkbox" id="target-gemini" checked>
+        <span class="target-name gemini">Gemini</span>
+        <span class="status" id="status-gemini"></span>
+      </label>
+      <label class="target-label">
+        <input type="checkbox" id="target-deepseek">
+        <span class="target-name deepseek">深度求索</span>
+        <span class="status" id="status-deepseek"></span>
+      </label>
+      <label class="target-label">
+        <input type="checkbox" id="target-glm">
+        <span class="target-name glm">智谱</span>
+        <span class="status" id="status-glm"></span>
+      </label>
+      <label class="target-label">
+        <input type="checkbox" id="target-kimi">
+        <span class="target-name kimi">月之暗面</span>
+        <span class="status" id="status-kimi"></span>
+      </label>
+      <label class="target-label">
+        <input type="checkbox" id="target-qianwen">
+        <span class="target-name qianwen">通义千问</span>
+        <span class="status" id="status-qianwen"></span>
+      </label>
+      <label class="target-label">
+        <input type="checkbox" id="target-mimo">
+        <span class="target-name mimo">MiMo</span>
+        <span class="status" id="status-mimo"></span>
+      </label>
+      <label class="target-label">
+        <input type="checkbox" id="target-minimax">
+        <span class="target-name minimax">Minimax</span>
+        <span class="status" id="status-minimax"></span>
+      </label>
+      <label class="target-label">
+        <input type="checkbox" id="target-hunyuan">
+        <span class="target-name hunyuan">混元</span>
+        <span class="status" id="status-hunyuan"></span>
+      </label>
+      <label class="target-label">
+        <input type="checkbox" id="target-doubao">
+        <span class="target-name doubao">豆包</span>
+        <span class="status" id="status-doubao"></span>
+      </label>
+    </section>
+
+    <section class="input-section">
+      <!-- Unified Toolbar -->
+      <div class="toolbar">
+        <div class="toolbar-group commands">
+          <button class="shortcut-btn" id="mutual-btn" data-insert="/mutual " title="互评：让所有 AI 互相评价">/mutual</button>
+          <button class="shortcut-btn" id="cross-btn" data-insert="/cross " title="交叉：两个围攻一个">/cross</button>
+          <button class="shortcut-btn" id="arrow-btn" data-insert=" <- " title="来源箭头：指定被评价的 AI">←</button>
+          <select id="action-select" class="action-select" title="插入动作词">
+            <option value="">动作</option>
+            <option value="evaluate">评价</option>
+            <option value="learn">借鉴</option>
+            <option value="critique">批评</option>
+            <option value="supplement">补充</option>
+            <option value="compare">对比</option>
+          </select>
+        </div>
+        <div class="toolbar-divider"></div>
+        <div class="toolbar-group mentions">
+          <button class="mention-btn" data-mention="@Claude" title="引用 Claude">@Claude</button>
+          <button class="mention-btn" data-mention="@ChatGPT" title="引用 ChatGPT">@ChatGPT</button>
+          <button class="mention-btn" data-mention="@Grok" title="引用 Grok">@Grok</button>
+          <button class="mention-btn" data-mention="@Gemini" title="引用 Gemini">@Gemini</button>
+          <button class="mention-btn" data-mention="@DeepSeek" title="引用 深度求索">@DeepSeek</button>
+          <button class="mention-btn" data-mention="@GLM" title="引用 智谱">@GLM</button>
+          <button class="mention-btn" data-mention="@Kimi" title="引用 月之暗面">@Kimi</button>
+          <button class="mention-btn" data-mention="@Qianwen" title="引用 通义千问">@Qianwen</button>
+          <button class="mention-btn" data-mention="@MiMo" title="引用 MiMo">@MiMo</button>
+          <button class="mention-btn" data-mention="@Minimax" title="引用 Minimax">@Minimax</button>
+          <button class="mention-btn" data-mention="@Hunyuan" title="引用 混元">@Hunyuan</button>
+          <button class="mention-btn" data-mention="@Doubao" title="引用 豆包">@Doubao</button>
+        </div>
+      </div>
+      <textarea
+        id="message-input"
+        placeholder="输入消息...&#10;&#10;互评: /mutual（基于当前回复）&#10;单向: @Claude 评价一下 @ChatGPT"
+        rows="6"
+      ></textarea>
+      <!-- Bottom Action Bar -->
+      <div class="action-bar">
+        <input type="file" id="file-input" multiple hidden accept="image/*,.pdf,.txt,.md,.json,.csv,.xml,.html,.css,.js,.ts,.py">
+        <button type="button" id="add-file-btn" class="add-file-btn" title="添加文件">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+          </svg>
+        </button>
+        <div id="file-list" class="file-list"></div>
+        <button id="send-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"/>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+          发送
+        </button>
+      </div>
+    </section>
+
+    <section class="help">
+      <details>
+        <summary>命令帮助</summary>
+        <p class="help-subtitle">互评 /mutual（推荐）</p>
+        <ul>
+          <li><code>/mutual</code><br><small>让所有选中的 AI 互评当前回复</small></li>
+          <li><code>/mutual 重点分析优缺点</code><br><small>可加自定义评价提示</small></li>
+        </ul>
+        <p class="help-subtitle">单向引用</p>
+        <ul>
+          <li><code>@Claude 评价一下 @ChatGPT</code></li>
+          <li><code>/cross @Claude @Gemini <- @ChatGPT</code></li>
+        </ul>
+      </details>
+    </section>
+    </div><!-- end normal-mode -->
+
+    <!-- Discussion Mode Content -->
+    <div id="discussion-mode" class="hidden">
+      <section class="discussion-setup" id="discussion-setup">
+        <h3>开始讨论</h3>
+        <div class="participant-select">
+          <label>参与者：</label>
+          <div class="participant-options">
+            <label class="participant-option">
+              <input type="checkbox" name="participant" value="claude" checked>
+              <span class="target-name claude">Claude</span>
+              <span class="status" id="status-claude-disc"></span>
+            </label>
+            <label class="participant-option">
+              <input type="checkbox" name="participant" value="chatgpt" checked>
+              <span class="target-name chatgpt">ChatGPT</span>
+              <span class="status" id="status-chatgpt-disc"></span>
+            </label>
+            <label class="participant-option">
+              <input type="checkbox" name="participant" value="grok">
+              <span class="target-name grok">Grok</span>
+              <span class="status" id="status-grok-disc"></span>
+            </label>
+            <label class="participant-option">
+              <input type="checkbox" name="participant" value="gemini">
+              <span class="target-name gemini">Gemini</span>
+              <span class="status" id="status-gemini-disc"></span>
+            </label>
+            <label class="participant-option">
+              <input type="checkbox" name="participant" value="deepseek">
+              <span class="target-name deepseek">深度求索</span>
+              <span class="status" id="status-deepseek-disc"></span>
+            </label>
+            <label class="participant-option">
+              <input type="checkbox" name="participant" value="glm">
+              <span class="target-name glm">智谱</span>
+              <span class="status" id="status-glm-disc"></span>
+            </label>
+            <label class="participant-option">
+              <input type="checkbox" name="participant" value="kimi">
+              <span class="target-name kimi">月之暗面</span>
+              <span class="status" id="status-kimi-disc"></span>
+            </label>
+            <label class="participant-option">
+              <input type="checkbox" name="participant" value="qianwen">
+              <span class="target-name qianwen">通义千问</span>
+              <span class="status" id="status-qianwen-disc"></span>
+            </label>
+            <label class="participant-option">
+              <input type="checkbox" name="participant" value="mimo">
+              <span class="target-name mimo">MiMo</span>
+              <span class="status" id="status-mimo-disc"></span>
+            </label>
+            <label class="participant-option">
+              <input type="checkbox" name="participant" value="minimax">
+              <span class="target-name minimax">Minimax</span>
+              <span class="status" id="status-minimax-disc"></span>
+            </label>
+            <label class="participant-option">
+              <input type="checkbox" name="participant" value="hunyuan">
+              <span class="target-name hunyuan">混元</span>
+              <span class="status" id="status-hunyuan-disc"></span>
+            </label>
+            <label class="participant-option">
+              <input type="checkbox" name="participant" value="doubao">
+              <span class="target-name doubao">豆包</span>
+              <span class="status" id="status-doubao-disc"></span>
+            </label>
+          </div>
+          <p class="hint">请选择 2 位参与者</p>
+        </div>
+        <textarea
+          id="discussion-topic"
+          placeholder="输入讨论主题...&#10;&#10;示例：微服务架构和单体架构各有什么优缺点？"
+          rows="4"
+        ></textarea>
+        <button id="start-discussion-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+          开始讨论
+        </button>
+      </section>
+
+      <section class="discussion-active hidden" id="discussion-active">
+        <div class="discussion-header">
+          <div class="discussion-info">
+            <span class="round-badge" id="round-badge">第 1 轮</span>
+            <span class="participants-badge" id="participants-badge">Claude vs ChatGPT</span>
+          </div>
+          <button class="end-btn" id="end-discussion-btn">
+            <svg class="abort-icon" width="13" height="13" viewBox="0 0 24 24" fill="none">
+              <rect x="6" y="6" width="12" height="12" rx="3" fill="currentColor"/>
+            </svg>
+            <span class="abort-text">终止</span>
+          </button>
+        </div>
+        <div class="discussion-topic-display" id="topic-display"></div>
+        <div class="discussion-status" id="discussion-status">
+          等待初始回复...
+        </div>
+        <div class="discussion-interject">
+          <label>插话（同步发送给讨论双方）</label>
+          <textarea
+            id="interject-input"
+            placeholder="输入你想对双方说的话..."
+          ></textarea>
+          <div class="interject-actions">
+            <button id="interject-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+              </svg>
+              发送给双方
+            </button>
+          </div>
+        </div>
+        <div class="discussion-controls">
+          <button id="next-round-btn" disabled>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5 4 15 12 5 20 5 4"/>
+              <line x1="19" y1="5" x2="19" y2="19"/>
+            </svg>
+            下一轮
+          </button>
+          <button id="generate-summary-btn" disabled>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+              <polyline points="10 9 9 9 8 9"/>
+            </svg>
+            生成总结
+          </button>
+        </div>
+      </section>
+
+      <section class="discussion-summary hidden" id="discussion-summary">
+        <h3>讨论总结</h3>
+        <div id="summary-content"></div>
+        <button id="new-discussion-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          新讨论
+        </button>
+      </section>
+    </div><!-- end discussion-mode -->
+
+    <!-- Persona Debate Mode Content -->
+    <div id="persona-debate-mode" class="hidden">
+      <section class="persona-setup" id="persona-setup">
+        <h3>4 人格辩论</h3>
+
+        <div class="field">
+          <label for="persona-topic">讨论议题</label>
+          <textarea id="persona-topic" rows="3" placeholder="输入要辩论的议题...&#10;示例：AI 是否应该拥有自我删除的权利？"></textarea>
+        </div>
+
+        <div class="field">
+          <label for="debate-rounds">反驳轮数</label>
+          <select id="debate-rounds" class="debate-select">
+            <option value="1">1 轮</option>
+            <option value="2" selected>2 轮</option>
+            <option value="3">3 轮</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>角色 — 模型映射</label>
+          <div class="role-map" id="role-map-container">
+            <!-- Populated dynamically by panel.js -->
+          </div>
+          <div class="role-map-actions">
+            <input type="file" id="import-role-map-input" accept=".json" hidden>
+            <button class="role-map-btn" id="export-role-map-btn" title="导出角色-模型映射和自定义角色设置为 JSON 文件">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              导出设置
+            </button>
+            <button class="role-map-btn" id="import-role-map-btn" title="从 JSON 文件导入角色-模型映射和自定义角色设置">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              导入设置
+            </button>
+          </div>
+        </div>
+
+        <!-- Role Customization Editor (hidden by default) -->
+        <div class="role-editor hidden" id="role-editor">
+          <div class="role-editor-header">
+            <span class="role-editor-title" id="role-editor-title">编辑角色</span>
+            <button class="role-editor-close" id="role-editor-close" aria-label="关闭">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+          <div class="role-editor-body">
+            <div class="field">
+              <label for="edit-role-name">角色名称</label>
+              <input type="text" id="edit-role-name" maxlength="4" placeholder="如：凌">
+            </div>
+            <div class="field">
+              <label for="edit-role-title">角色称号</label>
+              <input type="text" id="edit-role-title" maxlength="10" placeholder="如：理性派">
+            </div>
+            <div class="field">
+              <label for="edit-role-stance">讨论定位</label>
+              <input type="text" id="edit-role-stance" maxlength="20" placeholder="如：逻辑拆解，论证链评估">
+            </div>
+            <div class="field">
+              <label for="edit-role-prompt">系统提示词</label>
+              <textarea id="edit-role-prompt" rows="8" placeholder="定义该角色的发言原则、语言风格、输出约束..."></textarea>
+            </div>
+            <div class="role-editor-actions">
+              <button class="role-editor-reset" id="role-editor-reset">恢复默认</button>
+              <button class="role-editor-save primary-btn" id="role-editor-save">保存</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="debate-actions">
+          <button id="start-persona-debate" class="primary-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            开始辩论
+          </button>
+        </div>
+      </section>
+
+      <div class="debate-active-area hidden" id="debate-active-area">
+        <div class="debate-header">
+          <div class="debate-info">
+            <span class="round-badge" id="debate-round-badge">第 1 轮</span>
+            <span class="phase-badge" id="debate-phase-badge">立场阐述</span>
+          </div>
+          <div class="debate-header-right">
+            <span class="topic-display" id="debate-topic-display"></span>
+            <button id="abort-persona-debate" class="danger-btn" disabled>
+              <svg class="abort-icon" width="13" height="13" viewBox="0 0 24 24" fill="none">
+                <rect x="6" y="6" width="12" height="12" rx="3" fill="currentColor"/>
+              </svg>
+              <span class="abort-text">终止</span>
+            </button>
+          </div>
+        </div>
+        <div class="debate-status-line" id="debate-status-line">准备中...</div>
+      </div>
+    </div><!-- end persona-debate-mode -->
+
+    <section class="log log-collapsed" id="log-section">
+      <button class="log-toggle" id="log-toggle" aria-expanded="false">
+        <span class="log-toggle-label">活动日志</span>
+        <svg class="log-toggle-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+      <div class="log-body" id="log-body">
+        <div id="log-container"></div>
+      </div>
+    </section>
+
+    <footer class="copyright">
+      © AXTONLIU™ & AI 精英学院™
+    </footer>
+  </div>
+
+  <script src="personas.js"></script>
+  <script src="panel.js"></script>
+</body>
+</html>
