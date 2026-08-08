@@ -16,25 +16,55 @@ const AI_URL_PATTERNS = {
   hunyuan: ['yuanbao.tencent.com']
 };
 
-const CONTENT_SCRIPT_FILES = {
-  claude: ['content/dom-utils.js', 'content/claude.js'],
-  chatgpt: ['content/chatgpt.js'],
-  gemini: ['content/dom-utils.js', 'content/gemini.js'],
-  deepseek: ['content/dom-utils.js', 'content/deepseek.js'],
-  glm: ['content/dom-utils.js', 'content/glm.js'],
-  kimi: ['content/dom-utils.js', 'content/kimi.js'],
-  grok: ['content/dom-utils.js', 'content/grok.js'],
-  qianwen: ['content/dom-utils.js', 'content/qianwen.js'],
-  mimo: ['content/dom-utils.js', 'content/mimo.js'],
-  minimax: ['content/dom-utils.js', 'content/minimax.js'],
-  doubao: ['content/dom-utils.js', 'content/doubao.js'],
-  hunyuan: ['content/dom-utils.js', 'content/hunyuan.js']
+const AI_SITE_SCRIPTS = {
+  claude: 'content/claude.js',
+  chatgpt: 'content/chatgpt.js',
+  gemini: 'content/gemini.js',
+  deepseek: 'content/deepseek.js',
+  glm: 'content/glm.js',
+  kimi: 'content/kimi.js',
+  grok: 'content/grok.js',
+  qianwen: 'content/qianwen.js',
+  mimo: 'content/mimo.js',
+  minimax: 'content/minimax.js',
+  doubao: 'content/doubao.js',
+  hunyuan: 'content/hunyuan.js'
 };
 
+// Every site script depends on the shared helper stack (content/dom-utils.js +
+// content/base.js), which must be injected first, in order. The list is derived
+// from the site scripts so a new AI can never be registered with an incomplete
+// file list again — previously base.js (and dom-utils.js for chatgpt) were
+// missing, so on-demand re-injection into an already-open tab silently no-opped
+// at `if (!window.AIPanelBase?.boot(AI_TYPE)) return;` and messages never
+// reached the page even though the tab was "connected".
+const CONTENT_SCRIPT_FILES = {};
+for (const [aiType, siteScript] of Object.entries(AI_SITE_SCRIPTS)) {
+  CONTENT_SCRIPT_FILES[aiType] = ['content/dom-utils.js', 'content/base.js', siteScript];
+}
+
 // Store latest responses using chrome.storage.session (persists across service worker restarts)
+// Always expose every known AI key (derived from AI_URL_PATTERNS) so callers get
+// a consistent shape even for AIs that have never produced a response.
+function emptyResponses() {
+  const responses = {};
+  for (const aiType of Object.keys(AI_URL_PATTERNS)) {
+    responses[aiType] = null;
+  }
+  return responses;
+}
+
 async function getStoredResponses() {
   const result = await chrome.storage.session.get('latestResponses');
-  return result.latestResponses || { claude: null, chatgpt: null, gemini: null, deepseek: null, glm: null };
+  const stored = result.latestResponses || {};
+  // Backfill any newly added AI with null while preserving existing values
+  const responses = emptyResponses();
+  for (const aiType of Object.keys(responses)) {
+    if (Object.prototype.hasOwnProperty.call(stored, aiType)) {
+      responses[aiType] = stored[aiType];
+    }
+  }
+  return responses;
 }
 
 async function setStoredResponse(aiType, content) {
@@ -53,7 +83,9 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
 // Listen for messages from side panel and content scripts
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  handleMessage(message, sender).then(sendResponse);
+  handleMessage(message, sender)
+    .then(sendResponse)
+    .catch((err) => sendResponse({ success: false, error: err.message }));
   return true; // Keep channel open for async response
 });
 
@@ -94,8 +126,15 @@ async function handleMessage(message, sender) {
       return await handleSplitviewPoll();
 
     case 'PUBLISH_DEBATE_STATUS':
-      // Side panel publishes debate state to session storage for the split view to read
-      await chrome.storage.session.set({ debateStatus: message.status });
+      // Side panel publishes debate state to session storage for the split view
+      // to read. A terminal status (active: false, published on end/abort/reset)
+      // clears the stored status so a freshly opened split view never shows a
+      // stale, already-finished debate.
+      if (message.status && message.status.active === false) {
+        await chrome.storage.session.remove('debateStatus');
+      } else {
+        await chrome.storage.session.set({ debateStatus: message.status });
+      }
       return { success: true };
 
     default:
@@ -269,6 +308,14 @@ async function findAITab(aiType) {
   return scoredTabs[0]?.tab || null;
 }
 
+// Hostname-suffix match: exact host or a subdomain of the pattern, with the
+// leading "www." stripped. Using the hostname (not the raw URL string) avoids
+// false positives like https://evil.com/?r=kimi.com or notkimi.com
+function hostnameMatches(hostname, pattern) {
+  if (hostname === pattern) return true;
+  return hostname.endsWith('.' + pattern);
+}
+
 function scoreAITab(aiType, tab) {
   if (!tab.url) return -Infinity;
 
@@ -279,14 +326,21 @@ function scoreAITab(aiType, tab) {
     return -Infinity;
   }
 
+  const hostname = url.hostname.toLowerCase().replace(/^www\./, '');
   const patterns = AI_URL_PATTERNS[aiType];
-  if (!patterns?.some(p => url.hostname.includes(p))) return -Infinity;
+  if (!patterns?.some(p => hostnameMatches(hostname, p))) return -Infinity;
 
   let score = 0;
   if (tab.active) score += 30;
   if (!tab.discarded) score += 10;
+  // Recency bonus: full +20 for a tab accessed moments ago, decaying to +0
+  // over a 5-minute window. Previously this divided two epoch timestamps
+  // (lastAccessed / Date.now()), which is always ≈ 1.0 and gave every tab +20.
   if (typeof tab.lastAccessed === 'number') {
-    score += Math.min(20, Math.max(0, tab.lastAccessed / Date.now()) * 20);
+    const recencyMs = Math.max(0, Date.now() - tab.lastAccessed);
+    const recencyWindowMs = 5 * 60 * 1000;
+    const recency = Math.max(0, 1 - recencyMs / recencyWindowMs);
+    score += 20 * recency;
   }
 
   if (aiType === 'claude') {
@@ -364,8 +418,14 @@ function scoreAITab(aiType, tab) {
 
 function getAITypeFromUrl(url) {
   if (!url) return null;
+  let hostname;
+  try {
+    hostname = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+  } catch (err) {
+    return null;
+  }
   for (const [aiType, patterns] of Object.entries(AI_URL_PATTERNS)) {
-    if (patterns.some(p => url.includes(p))) {
+    if (patterns.some(p => hostnameMatches(hostname, p))) {
       return aiType;
     }
   }
@@ -390,8 +450,5 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-// Track tab closures
-chrome.tabs.onRemoved.addListener((tabId) => {
-  // We'd need to track which tabs were AI tabs to notify properly
-  // For now, side panel will re-check on next action
-});
+// No tab-closure tracking needed: findAITab() queries live tabs on every call,
+// and the side panel re-checks its status dots on load and on TAB_STATUS_UPDATE.

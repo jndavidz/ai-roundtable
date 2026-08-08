@@ -1,71 +1,20 @@
 // AI Panel - Gemini Content Script
+// Uses the shared controller from content/base.js; site-specific config only:
+// composer selectors, response extraction and the multi-strategy file upload.
 
 (function() {
   'use strict';
 
   const AI_TYPE = 'gemini';
-  const LOAD_FLAG = '__AIPanelContentLoaded_gemini';
-  const LOAD_VERSION = chrome.runtime?.getManifest?.().version || 'unknown';
-  if (window[LOAD_FLAG] === LOAD_VERSION) return;
-  window[LOAD_FLAG] = LOAD_VERSION;
+  if (!window.AIPanelBase?.boot(AI_TYPE)) return;
 
-  // Check if extension context is still valid
-  function isContextValid() {
-    return chrome.runtime && chrome.runtime.id;
-  }
+  window.AIPanelBase.createController({
+    aiType: AI_TYPE,
+    name: 'Gemini',
+    afterInputDelay: 650,
 
-  // Safe message sender that checks context first
-  function safeSendMessage(message, callback) {
-    if (!isContextValid()) {
-      console.log('[AI Panel] Extension context invalidated, skipping message');
-      return;
-    }
-    try {
-      chrome.runtime.sendMessage(message, callback);
-    } catch (e) {
-      console.log('[AI Panel] Failed to send message:', e.message);
-    }
-  }
-
-  // Notify background that content script is ready
-  safeSendMessage({ type: 'CONTENT_SCRIPT_READY', aiType: AI_TYPE });
-
-  // Listen for messages from background script
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === 'INJECT_MESSAGE') {
-      injectMessage(message.message)
-        .then(() => sendResponse({ success: true }))
-        .catch(err => sendResponse({ success: false, error: err.message }));
-      return true;
-    }
-
-    if (message.type === 'INJECT_FILES') {
-      console.log('[AI Panel] Gemini received INJECT_FILES message, files:', message.files?.length);
-      injectFiles(message.files)
-        .then(() => {
-          console.log('[AI Panel] Gemini injectFiles completed successfully');
-          sendResponse({ success: true });
-        })
-        .catch(err => {
-          console.log('[AI Panel] Gemini injectFiles failed:', err.message);
-          sendResponse({ success: false, error: err.message });
-        });
-      return true;
-    }
-
-    if (message.type === 'GET_LATEST_RESPONSE') {
-      const response = getLatestResponse();
-      sendResponse({ content: response });
-      return true;
-    }
-  });
-
-  // Setup response observer for cross-reference feature
-  setupResponseObserver();
-
-  async function injectMessage(text) {
     // Gemini uses a rich text editor (contenteditable or textarea)
-    const inputSelectors = [
+    inputSelectors: [
       '.ql-editor[contenteditable="true"]',
       'rich-textarea [contenteditable="true"]',
       'div[contenteditable="true"][aria-label*="prompt" i]',
@@ -79,16 +28,9 @@
       '.input-area textarea',
       'div[contenteditable="true"]',
       'textarea'
-    ];
+    ],
 
-    const inputEl = window.AIPanelDom?.findInputField(inputSelectors, { preferBottom: true });
-
-    if (!inputEl) {
-      throw new Error('Could not find input field');
-    }
-
-    await window.AIPanelDom.setEditorText(inputEl, text, { afterInputDelay: 650 });
-    const submitResult = await window.AIPanelDom.submitMessage(inputEl, {
+    submitOptions: {
       selectors: [
         'button[aria-label*="Send" i]',
         'button[aria-label*="Submit" i]',
@@ -105,196 +47,74 @@
       enterFallback: true,
       maxWait: 7000,
       afterClickDelay: 900
-    });
+    },
 
-    // Start capturing response after sending
-    console.log('[AI Panel] Gemini message sent via', submitResult.method, 'starting response capture...');
-    waitForStreamingComplete();
+    responseSelectors: [
+      '.model-response-text',
+      'message-content'
+    ],
 
-    return true;
-  }
+    // Gemini has no reliable streaming indicator; rely on content-stability
+    // detection (no streamingSelectors => streaming signal is always false).
 
-  function setupResponseObserver() {
-    const observer = new MutationObserver((mutations) => {
-      // Check context validity in observer callback
-      if (!isContextValid()) {
-        observer.disconnect();
-        return;
+    getLatestResponse: function() {
+      // Gemini uses .model-response-text for AI responses
+      const messages = document.querySelectorAll('.model-response-text');
+
+      if (messages.length > 0) {
+        const lastMessage = messages[messages.length - 1];
+        // Use innerText to preserve line breaks
+        const content = lastMessage.innerText.trim();
+        console.log('[AI Panel] Gemini response found, length:', content.length);
+        return content;
       }
-      for (const mutation of mutations) {
-        if (mutation.type === 'childList') {
-          for (const node of mutation.addedNodes) {
-            if (node.nodeType === Node.ELEMENT_NODE) {
-              checkForResponse(node);
-            }
-          }
-        }
+
+      // Fallback to message-content
+      const fallback = document.querySelectorAll('message-content');
+      if (fallback.length > 0) {
+        const lastMessage = fallback[fallback.length - 1];
+        const content = lastMessage.innerText.trim();
+        console.log('[AI Panel] Gemini response (fallback), length:', content.length);
+        return content;
       }
-    });
 
-    const startObserving = () => {
-      if (!isContextValid()) return;
-      const mainContent = document.querySelector('main, .conversation-container') || document.body;
-      observer.observe(mainContent, {
-        childList: true,
-        subtree: true
-      });
-    };
+      console.log('[AI Panel] Gemini: no response found');
+      return null;
+    },
 
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', startObserving);
-    } else {
-      startObserving();
-    }
-  }
+    // File injection for Gemini. Gemini's UI changes frequently, so try the
+    // supported browser surfaces in order: file input, paste, then drop.
+    injectFiles: async function(filesData) {
+      console.log('[AI Panel] Gemini injecting files:', filesData.length);
+      const files = window.AIPanelBase.base64ToFiles(filesData);
+      const sleep = window.AIPanelBase.sleep;
 
-  let lastCapturedContent = '';
-  let isCapturing = false;  // Prevent multiple captures
+      const beforeSnapshot = getUploadSnapshot(files);
+      const attempts = [];
 
-  function checkForResponse(node) {
-    // Skip if already capturing
-    if (isCapturing) return;
-
-    // Check if this node or its children contain a model response
-    const isResponse = node.matches?.('.model-response-text, message-content') ||
-                      node.querySelector?.('.model-response-text, message-content') ||
-                      node.classList?.contains('model-response-text');
-
-    if (isResponse) {
-      console.log('[AI Panel] Gemini detected new response, waiting for completion...');
-      waitForStreamingComplete();
-    }
-  }
-
-  async function waitForStreamingComplete() {
-    // Prevent multiple simultaneous captures
-    if (isCapturing) {
-      console.log('[AI Panel] Gemini already capturing, skipping...');
-      return;
-    }
-    isCapturing = true;
-
-    let previousContent = '';
-    let stableCount = 0;
-    const maxWait = 600000;  // 10 minutes - AI responses can be very long
-    const checkInterval = 500;
-    const stableThreshold = 4;  // 2 seconds of stable content
-
-    const startTime = Date.now();
-
-    try {
-      while (Date.now() - startTime < maxWait) {
-        if (!isContextValid()) {
-          console.log('[AI Panel] Context invalidated, stopping capture');
-          return;
-        }
-
-        await sleep(checkInterval);
-
-        const currentContent = getLatestResponse() || '';
-
-        if (currentContent === previousContent && currentContent.length > 0) {
-          stableCount++;
-          if (stableCount >= stableThreshold) {
-            if (currentContent !== lastCapturedContent) {
-              lastCapturedContent = currentContent;
-              safeSendMessage({
-                type: 'RESPONSE_CAPTURED',
-                aiType: AI_TYPE,
-                content: currentContent
-              });
-              console.log('[AI Panel] Gemini response captured, length:', currentContent.length);
-            }
-            return;
-          }
-        } else {
-          stableCount = 0;
-        }
-
-        previousContent = currentContent;
+      if (await tryGeminiFileInputUpload(files, beforeSnapshot)) {
+        console.log('[AI Panel] Gemini files injected via file input');
+        return true;
       }
-    } finally {
-      isCapturing = false;
-    }
-  }
+      attempts.push('file input');
 
-  function getLatestResponse() {
-    // Gemini uses .model-response-text for AI responses
-    const messages = document.querySelectorAll('.model-response-text');
-
-    if (messages.length > 0) {
-      const lastMessage = messages[messages.length - 1];
-      // Use innerText to preserve line breaks
-      const content = lastMessage.innerText.trim();
-      console.log('[AI Panel] Gemini response found, length:', content.length);
-      return content;
-    }
-
-    // Fallback to message-content
-    const fallback = document.querySelectorAll('message-content');
-    if (fallback.length > 0) {
-      const lastMessage = fallback[fallback.length - 1];
-      const content = lastMessage.innerText.trim();
-      console.log('[AI Panel] Gemini response (fallback), length:', content.length);
-      return content;
-    }
-
-    console.log('[AI Panel] Gemini: no response found');
-    return null;
-  }
-
-  // Utility functions
-  function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  function isVisible(el) {
-    if (!el) return false;
-    const style = window.getComputedStyle(el);
-    return style.display !== 'none' &&
-           style.visibility !== 'hidden' &&
-           style.opacity !== '0';
-  }
-
-  // File injection for Gemini. Gemini's UI changes frequently, so try the
-  // supported browser surfaces in order: file input, paste, then drop.
-  async function injectFiles(filesData) {
-    console.log('[AI Panel] Gemini injecting files:', filesData.length);
-
-    const files = filesData.map(fileData => {
-      const byteCharacters = atob(fileData.base64);
-      const byteNumbers = new Array(byteCharacters.length);
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      if (await tryGeminiPasteUpload(files, beforeSnapshot)) {
+        console.log('[AI Panel] Gemini files injected via paste event');
+        return true;
       }
-      const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { type: fileData.type });
-      return new File([blob], fileData.name, { type: fileData.type });
-    });
+      attempts.push('paste');
 
-    const beforeSnapshot = getUploadSnapshot(files);
-    const attempts = [];
+      if (await tryGeminiDropUpload(files, beforeSnapshot)) {
+        console.log('[AI Panel] Gemini files injected via drop event');
+        return true;
+      }
+      attempts.push('drop');
 
-    if (await tryGeminiFileInputUpload(files, beforeSnapshot)) {
-      console.log('[AI Panel] Gemini files injected via file input');
-      return true;
+      throw new Error(`Gemini 文件上传未被页面接受（已尝试: ${attempts.join(', ')}）。请手动上传，或打开 Gemini 页面 console 查看 [AI Panel] Gemini upload 日志。`);
     }
-    attempts.push('file input');
+  });
 
-    if (await tryGeminiPasteUpload(files, beforeSnapshot)) {
-      console.log('[AI Panel] Gemini files injected via paste event');
-      return true;
-    }
-    attempts.push('paste');
-
-    if (await tryGeminiDropUpload(files, beforeSnapshot)) {
-      console.log('[AI Panel] Gemini files injected via drop event');
-      return true;
-    }
-    attempts.push('drop');
-
-    throw new Error(`Gemini 文件上传未被页面接受（已尝试: ${attempts.join(', ')}）。请手动上传，或打开 Gemini 页面 console 查看 [AI Panel] Gemini upload 日志。`);
-  }
+  // ===== Gemini file upload helpers =====
 
   async function tryGeminiFileInputUpload(files, beforeSnapshot) {
     await revealGeminiFileInputs();
@@ -326,12 +146,12 @@
 
     for (const btn of buttons.slice(0, 4)) {
       clickElement(btn);
-      await sleep(350);
+      await window.AIPanelBase.sleep(350);
 
       const menuItems = findUploadMenuItems();
       for (const item of menuItems.slice(0, 3)) {
         clickElement(item);
-        await sleep(350);
+        await window.AIPanelBase.sleep(350);
         if (document.querySelectorAll('input[type="file"]').length > beforeCount) return;
       }
 
@@ -352,9 +172,9 @@
       'button[data-test-id*="upload" i]',
       'button[data-testid*="upload" i]'
     ];
-    const matches = collectElements(selectors).filter(isVisible);
+    const matches = collectElements(selectors).filter(window.AIPanelBase.isVisible);
     const buttons = Array.from(document.querySelectorAll('button, [role="button"]')).filter(el => {
-      if (!isVisible(el)) return false;
+      if (!window.AIPanelBase.isVisible(el)) return false;
       const label = getElementLabel(el).toLowerCase();
       return /(add files|upload|attach|file|image|photo|添加文件|上传|附件|图片|照片)/i.test(label);
     });
@@ -373,7 +193,7 @@
     ];
 
     return collectElements(selectors).filter(el => {
-      if (!isVisible(el)) return false;
+      if (!window.AIPanelBase.isVisible(el)) return false;
       const label = getElementLabel(el).toLowerCase();
       return /(upload|files|file|device|computer|image|photo|上传|文件|本机|电脑|图片|照片)/i.test(label) &&
              !/(drive|camera|photos|notebook|google drive|相机|云端硬盘|notebooklm)/i.test(label);
@@ -452,7 +272,7 @@
         dataTransfer
       });
       target.dispatchEvent(event);
-      await sleep(80);
+      await window.AIPanelBase.sleep(80);
     }
 
     return await waitForGeminiUploadAccepted(files, beforeSnapshot, 8000);
@@ -480,7 +300,7 @@
       '.conversation-container'
     ];
 
-    return collectElements(selectors).find(isVisible) || document.body;
+    return collectElements(selectors).find(window.AIPanelBase.isVisible) || document.body;
   }
 
   function createFileDataTransfer(files) {
@@ -496,7 +316,7 @@
       if (snapshot.acceptedCount > beforeSnapshot.acceptedCount) return true;
       if (snapshot.hasFileName && !beforeSnapshot.hasFileName) return true;
       if (snapshot.hasAttachmentUi && snapshot.attachmentUiCount > beforeSnapshot.attachmentUiCount) return true;
-      await sleep(250);
+      await window.AIPanelBase.sleep(250);
     }
     return false;
   }
@@ -518,7 +338,7 @@
       '[class*="file-chip" i]',
       '[class*="upload" i]'
     ];
-    const attachmentUiCount = collectElements(attachmentSelectors).filter(isVisible).length;
+    const attachmentUiCount = collectElements(attachmentSelectors).filter(window.AIPanelBase.isVisible).length;
     const acceptedCount = files.reduce((count, file) => count + (text.includes(file.name) ? 1 : 0), 0);
 
     return {
@@ -574,6 +394,4 @@
     }
     el.click?.();
   }
-
-  console.log('[AI Panel] Gemini content script loaded');
 })();

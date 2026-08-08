@@ -1,4 +1,7 @@
 // AI Panel - Side Panel Controller
+// NOTE: depends on personas.js being loaded FIRST (it defines PERSONAS,
+// DEFAULT_ROLE_AI_MAP, personaDebateState and AI_MODEL_OPTIONS used below).
+// Load order is enforced in panel.html: personas.js before panel.js.
 
 const AI_TYPES = ['claude', 'chatgpt', 'gemini', 'deepseek', 'glm', 'kimi', 'grok', 'qianwen', 'mimo', 'minimax', 'doubao', 'hunyuan'];
 
@@ -41,22 +44,6 @@ const fileList = document.getElementById('file-list');
 
 // Selected files storage
 let selectedFiles = [];
-
-// Track connected tabs
-const connectedTabs = {
-  claude: null,
-  chatgpt: null,
-  gemini: null,
-  deepseek: null,
-  glm: null,
-  kimi: null,
-  grok: null,
-  qianwen: null,
-  mimo: null,
-  minimax: null,
-  doubao: null,
-  hunyuan: null
-};
 
 // Discussion Mode State
 let discussionState = {
@@ -169,6 +156,11 @@ function setupEventListeners() {
         log(`${message.aiType}: Message sent`, 'success');
       } else {
         log(`${message.aiType}: Failed - ${message.error}`, 'error');
+        // A failed send usually means the tab's content script isn't actually
+        // live (e.g. the page was opened before the extension was installed or
+        // reloaded). Reflect that on the status dot instead of leaving it green,
+        // which would mislead the user into thinking the model is reachable.
+        updateTabStatus(message.aiType, false);
       }
     }
   });
@@ -181,7 +173,6 @@ async function checkConnectedTabs() {
     for (const tab of tabs) {
       const aiType = getAITypeFromUrl(tab.url);
       if (aiType) {
-        connectedTabs[aiType] = tab.id;
         updateTabStatus(aiType, true);
       }
     }
@@ -190,20 +181,41 @@ async function checkConnectedTabs() {
   }
 }
 
+// Hostname-suffix match: exact host or a subdomain of the pattern, with the
+// leading "www." stripped. Using the hostname (not the raw URL string) avoids
+// false positives like https://evil.com/?r=kimi.com
+function hostnameMatches(hostname, pattern) {
+  if (hostname === pattern) return true;
+  return hostname.endsWith('.' + pattern);
+}
+
 function getAITypeFromUrl(url) {
   if (!url) return null;
-  if (url.includes('claude.ai')) return 'claude';
-  if (url.includes('chat.openai.com') || url.includes('chatgpt.com')) return 'chatgpt';
-  if (url.includes('gemini.google.com')) return 'gemini';
-  if (url.includes('chat.deepseek.com')) return 'deepseek';
-  if (url.includes('chatglm.cn') || url.includes('z.ai')) return 'glm';
-  if (url.includes('kimi.com')) return 'kimi';
-  if (url.includes('grok.com')) return 'grok';
-  if (url.includes('qianwen.com') || url.includes('tongyi.aliyun.com')) return 'qianwen';
-  if (url.includes('xiaomimimo.com')) return 'mimo';
-  if (url.includes('minimaxi.com') || url.includes('minimax.io')) return 'minimax';
-  if (url.includes('doubao.com')) return 'doubao';
-  if (url.includes('yuanbao.tencent.com')) return 'hunyuan';
+  let hostname;
+  try {
+    hostname = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+  } catch (err) {
+    return null;
+  }
+
+  const patterns = {
+    claude: ['claude.ai'],
+    chatgpt: ['chat.openai.com', 'chatgpt.com'],
+    gemini: ['gemini.google.com'],
+    deepseek: ['chat.deepseek.com'],
+    glm: ['chatglm.cn', 'z.ai'],
+    kimi: ['kimi.com'],
+    grok: ['grok.com'],
+    qianwen: ['qianwen.com', 'tongyi.aliyun.com'],
+    mimo: ['xiaomimimo.com'],
+    minimax: ['minimaxi.com', 'minimax.io'],
+    doubao: ['doubao.com'],
+    hunyuan: ['yuanbao.tencent.com']
+  };
+
+  for (const [aiType, hosts] of Object.entries(patterns)) {
+    if (hosts.some(h => hostnameMatches(hostname, h))) return aiType;
+  }
   return null;
 }
 
@@ -219,9 +231,6 @@ function updateTabStatus(aiType, connected) {
   if (discStatusEl) {
     discStatusEl.className = 'status ' + (connected ? 'connected' : 'disconnected');
     discStatusEl.title = connected ? '已连接' : '未找到';
-  }
-  if (connected) {
-    connectedTabs[aiType] = true;
   }
 }
 
@@ -500,7 +509,9 @@ function log(message, type = 'info') {
     second: '2-digit'
   });
 
-  entry.innerHTML = `<span class="time">${time}</span>${message}`;
+  // message may contain error strings from content scripts (which can carry
+  // page-side text), so escape before injecting into the DOM
+  entry.innerHTML = `<span class="time">${time}</span>${escapeHtml(message)}`;
   logContainer.insertBefore(entry, logContainer.firstChild);
 
   // Keep only last 50 entries
@@ -552,6 +563,18 @@ function switchMode(mode) {
     'discussion': { panel: 'discussion-mode', btn: 'mode-discussion' },
     'persona-debate': { panel: 'persona-debate-mode', btn: 'mode-persona-debate' }
   };
+
+  // Leaving an active session must stop it — otherwise a running debate keeps
+  // sending messages to AI tabs in the background (its abortChecker polls
+  // personaDebateState.active, which stays true unless we flip it here).
+  if (mode !== 'persona-debate' && personaDebateState.active) {
+    personaDebateState.active = false;
+    log('[人格辩论] 已中止（切换模式）');
+    publishDebateStatus(); // active:false → background clears stored status
+  }
+  if (mode !== 'discussion' && discussionState.active) {
+    resetDiscussion();
+  }
 
   // Hide all mode panels and deactivate all buttons
   Object.values(modes).forEach(m => {
@@ -779,6 +802,8 @@ ${ai1Response}
   btn.disabled = false;
 }
 
+let summaryPollTimer = null;  // cleared on timeout / resetDiscussion / abort
+
 async function generateSummary() {
   document.getElementById('generate-summary-btn').disabled = true;
   updateDiscussionStatus('waiting', '正在请求双方生成总结...');
@@ -814,10 +839,17 @@ ${historyText}`;
   await sendToAI(ai1, summaryPrompt);
   await sendToAI(ai2, summaryPrompt);
 
-  // Wait for both responses, then show summary
-  const checkForSummary = setInterval(async () => {
+  // Wait for both responses, then show summary.
+  // Poll the pending set (events for the summary phase already funnel through
+  // handleDiscussionResponse, which drains pendingResponses), but bound the wait:
+  // a lost/errored response used to leak this interval forever.
+  const SUMMARY_TIMEOUT = 120000; // 2 minutes
+  const startedAt = Date.now();
+  if (summaryPollTimer) clearInterval(summaryPollTimer);
+  summaryPollTimer = setInterval(() => {
     if (discussionState.pendingResponses.size === 0) {
-      clearInterval(checkForSummary);
+      clearInterval(summaryPollTimer);
+      summaryPollTimer = null;
 
       // Get both summaries
       const summaries = discussionState.history.filter(h => h.type === 'summary');
@@ -826,6 +858,12 @@ ${historyText}`;
 
       log(`[Summary] 双方总结已生成`, 'success');
       showSummary(ai1Summary, ai2Summary);
+    } else if (Date.now() - startedAt > SUMMARY_TIMEOUT) {
+      clearInterval(summaryPollTimer);
+      summaryPollTimer = null;
+      log('[Summary] 总结生成超时，已停止等待', 'error');
+      document.getElementById('generate-summary-btn').disabled = false;
+      updateDiscussionStatus('ready', '总结超时，可重试或继续讨论');
     }
   }, 500);
 }
@@ -886,6 +924,12 @@ function endDiscussion() {
 }
 
 function resetDiscussion() {
+  // Stop any pending summary wait so it can't leak after the discussion ends
+  if (summaryPollTimer) {
+    clearInterval(summaryPollTimer);
+    summaryPollTimer = null;
+  }
+
   discussionState = {
     active: false,
     topic: '',
@@ -1225,9 +1269,9 @@ function sendAndWait(aiType, message) {
         settled = true;
         clearInterval(abortChecker);
         chrome.runtime.onMessage.removeListener(handler);
-        reject(new Error(`${aiType} 响应超时（10 分钟）`));
+        reject(new Error(`${aiType} 响应超时（10 分 20 秒）`));
       }
-    }, 620000);
+    }, 620000); // 10 minutes + 20s buffer
 
     // Abort checker: polls debate active state every 300ms
     // If user clicks abort, this rejects immediately instead of waiting for timeout

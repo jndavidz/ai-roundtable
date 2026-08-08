@@ -46,62 +46,62 @@
   "content_scripts": [
     {
       "matches": ["https://claude.ai/*"],
-      "js": ["content/dom-utils.js", "content/claude.js"],
+      "js": ["content/dom-utils.js", "content/base.js", "content/claude.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://chat.openai.com/*", "https://chatgpt.com/*"],
-      "js": ["content/chatgpt.js"],
+      "js": ["content/dom-utils.js", "content/base.js", "content/chatgpt.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://gemini.google.com/*"],
-      "js": ["content/dom-utils.js", "content/gemini.js"],
+      "js": ["content/dom-utils.js", "content/base.js", "content/gemini.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://chat.deepseek.com/*"],
-      "js": ["content/dom-utils.js", "content/deepseek.js"],
+      "js": ["content/dom-utils.js", "content/base.js", "content/deepseek.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://chatglm.cn/*", "https://z.ai/*"],
-      "js": ["content/dom-utils.js", "content/glm.js"],
+      "js": ["content/dom-utils.js", "content/base.js", "content/glm.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://www.kimi.com/*", "https://kimi.com/*"],
-      "js": ["content/dom-utils.js", "content/kimi.js"],
+      "js": ["content/dom-utils.js", "content/base.js", "content/kimi.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://grok.com/*"],
-      "js": ["content/dom-utils.js", "content/grok.js"],
+      "js": ["content/dom-utils.js", "content/base.js", "content/grok.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://www.qianwen.com/*", "https://qianwen.com/*", "https://tongyi.aliyun.com/*"],
-      "js": ["content/dom-utils.js", "content/qianwen.js"],
+      "js": ["content/dom-utils.js", "content/base.js", "content/qianwen.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://aistudio.xiaomimimo.com/*"],
-      "js": ["content/dom-utils.js", "content/mimo.js"],
+      "js": ["content/dom-utils.js", "content/base.js", "content/mimo.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://chat.minimaxi.com/*", "https://agent.minimaxi.com/*", "https://chat.minimax.io/*"],
-      "js": ["content/dom-utils.js", "content/minimax.js"],
+      "js": ["content/dom-utils.js", "content/base.js", "content/minimax.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://www.doubao.com/*", "https://doubao.com/*"],
-      "js": ["content/dom-utils.js", "content/doubao.js"],
+      "js": ["content/dom-utils.js", "content/base.js", "content/doubao.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://yuanbao.tencent.com/*"],
-      "js": ["content/dom-utils.js", "content/hunyuan.js"],
+      "js": ["content/dom-utils.js", "content/base.js", "content/hunyuan.js"],
       "run_at": "document_idle"
     }
   ],
@@ -115,12 +115,5 @@
 
   "action": {
     "default_title": "打开 AI 圆桌"
-  },
-
-  "web_accessible_resources": [
-    {
-      "resources": ["sidepanel/splitview.html"],
-      "matches": ["<all_urls>"]
-    }
-  ]
+  }
 }

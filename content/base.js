@@ -1,0 +1,325 @@
+// AI Panel - shared base for all AI content scripts
+// Provides the standardized content-script lifecycle so each site file only
+// configures the parts that differ: selectors, response extraction, streaming
+// signals and (optionally) file injection.
+//
+// Requires content/dom-utils.js to be injected first (window.AIPanelDom).
+
+(function() {
+  'use strict';
+
+  if (window.AIPanelBase) return;
+
+  function isContextValid() {
+    return chrome.runtime && chrome.runtime.id;
+  }
+
+  function safeSendMessage(message, callback) {
+    if (!isContextValid()) {
+      console.log('[AI Panel] Extension context invalidated, skipping message');
+      return;
+    }
+    try {
+      chrome.runtime.sendMessage(message, callback);
+    } catch (e) {
+      console.log('[AI Panel] Failed to send message:', e.message);
+    }
+  }
+
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function isVisible(el) {
+    if (!el) return false;
+    const style = window.getComputedStyle(el);
+    return style.display !== 'none' &&
+           style.visibility !== 'hidden' &&
+           style.opacity !== '0';
+  }
+
+  // Per-AI load guard: content scripts can be re-injected on navigation, but
+  // only the first instance for the current extension version should run.
+  function boot(aiType) {
+    const LOAD_FLAG = '__AIPanelContentLoaded_' + aiType;
+    const LOAD_VERSION = chrome.runtime?.getManifest?.().version || 'unknown';
+    if (window[LOAD_FLAG] === LOAD_VERSION) return false;
+    window[LOAD_FLAG] = LOAD_VERSION;
+    return true;
+  }
+
+  // Convert base64 payloads (from the side panel) into File objects.
+  function base64ToFiles(filesData) {
+    return filesData.map(fileData => {
+      const byteCharacters = atob(fileData.base64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: fileData.type });
+      return new File([blob], fileData.name, { type: fileData.type });
+    });
+  }
+
+  // ===== Unified streaming capture =====
+  // Multi-signal NEW content detection:
+  //   Signal 1: message container count increased (when getMessageCount provided)
+  //   Signal 2: content text changed from the pre-send snapshot
+  //   Signal 3: streaming indicator active (getStreamingSignal / streamingSelectors)
+  // Plus a 45s fallback capture and a stale-streaming force-capture, so a
+  // response is captured even when the site's streaming indicator never shows.
+  function createCapture(config) {
+    const {
+      aiType,
+      name,
+      getLatestResponse,
+      getMessageCount,
+      getCaptureAbortError,
+      maxWait = 600000,        // 10 minutes absolute cap
+      checkInterval = 500,
+      stableThreshold = 4,     // ~2s of stable content
+      fallbackTimeout = 45000, // if no signal fired, try fallback detection
+      staleStreamingTimeout = 15000
+    } = config;
+
+    const getStreamingSignal = config.getStreamingSignal ||
+      (config.streamingSelectors
+        ? () => config.streamingSelectors.some(s => document.querySelector(s))
+        : () => false);
+
+    let isCapturing = false;
+    let lastCapturedContent = '';
+
+    async function captureResponse({ preSendContent = '' } = {}) {
+      if (isCapturing) {
+        console.log('[AI Panel]', name, 'already capturing, skipping...');
+        return;
+      }
+      isCapturing = true;
+
+      let previousContent = '';
+      let stableCount = 0;
+      let newContentDetected = false;
+      let streamingEverDetected = false;
+      let lastStreamingTime = 0;
+      const startTime = Date.now();
+      const preSendContainerCount = getMessageCount ? getMessageCount() : 0;
+
+      try {
+        while (Date.now() - startTime < maxWait) {
+          if (!isContextValid()) {
+            console.log('[AI Panel] Context invalidated, stopping capture');
+            return;
+          }
+
+          // Some sites lose the session mid-debate; allow an explicit abort
+          const abortError = getCaptureAbortError ? getCaptureAbortError() : null;
+          if (abortError) {
+            safeSendMessage({
+              type: 'RESPONSE_CAPTURED',
+              aiType,
+              content: null,
+              error: abortError
+            });
+            return;
+          }
+
+          await sleep(checkInterval);
+
+          const currentContent = getLatestResponse() || '';
+          const currentContainerCount = getMessageCount ? getMessageCount() : 0;
+          const isStreaming = getStreamingSignal();
+
+          if (isStreaming) {
+            streamingEverDetected = true;
+            lastStreamingTime = Date.now();
+          }
+
+          if (!newContentDetected) {
+            const containerIncreased = currentContainerCount > preSendContainerCount;
+            const contentChanged = currentContent && currentContent !== preSendContent;
+            if (containerIncreased || contentChanged || isStreaming) {
+              newContentDetected = true;
+              console.log('[AI Panel]', name, 'NEW content detected —',
+                'contentChanged:', !!contentChanged,
+                ', streaming:', isStreaming,
+                ', contentLen:', currentContent.length);
+            }
+          }
+
+          // Fallback: if no signal fired but content differs after the fallback
+          // window, capture it anyway (site signals may have changed).
+          if (!newContentDetected && Date.now() - startTime > fallbackTimeout) {
+            if ((currentContent && currentContent !== preSendContent) ||
+                currentContainerCount > preSendContainerCount) {
+              console.log('[AI Panel]', name, 'fallback capture — content changed but no signal fired');
+              newContentDetected = true;
+            }
+          }
+
+          if (newContentDetected) {
+            const streamingStopped = !isStreaming && (Date.now() - lastStreamingTime > 2000);
+            if (streamingStopped && currentContent === previousContent && currentContent.length > 0) {
+              stableCount++;
+              if (stableCount >= stableThreshold) {
+                // Final guard: don't capture content identical to the pre-send state
+                if (currentContent === preSendContent) {
+                  console.log('[AI Panel]', name, 'content same as pre-send, continuing to wait...');
+                  stableCount = 0;
+                  previousContent = currentContent;
+                  continue;
+                }
+                if (currentContent === lastCapturedContent) return; // already reported
+                lastCapturedContent = currentContent;
+                safeSendMessage({
+                  type: 'RESPONSE_CAPTURED',
+                  aiType,
+                  content: currentContent
+                });
+                console.log('[AI Panel]', name, 'response captured, length:', currentContent.length);
+                return;
+              }
+            } else {
+              stableCount = 0;
+            }
+
+            // Stale streaming: the indicator may get stuck; if content has been
+            // stable for a while, force-capture anyway.
+            if (streamingEverDetected && Date.now() - lastStreamingTime > staleStreamingTimeout &&
+                currentContent === previousContent && currentContent.length > 0 &&
+                currentContent !== preSendContent &&
+                currentContent !== lastCapturedContent) {
+              lastCapturedContent = currentContent;
+              safeSendMessage({
+                type: 'RESPONSE_CAPTURED',
+                aiType,
+                content: currentContent
+              });
+              console.log('[AI Panel]', name, 'stale streaming detected, force-captured, length:', currentContent.length);
+              return;
+            }
+          }
+
+          previousContent = currentContent;
+        }
+        console.log('[AI Panel]', name, 'capture timeout after', maxWait / 1000, 'seconds');
+      } finally {
+        isCapturing = false;
+      }
+    }
+
+    return { captureResponse, isCapturing: () => isCapturing };
+  }
+
+  // ===== Response observer =====
+  // Watches for new response nodes; when one appears, starts a capture.
+  // captureResponse is guarded by its own isCapturing flag, so overlapping
+  // triggers from injectMessage and the observer are deduplicated.
+  function createResponseObserver(config, capture) {
+    if (!config.responseSelectors || config.responseSelectors.length === 0) return;
+
+    let observer = null;
+
+    function handleNode(node) {
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      for (const selector of config.responseSelectors) {
+        if (node.matches?.(selector) || node.querySelector?.(selector)) {
+          console.log('[AI Panel]', config.name, 'detected new response...');
+          capture.captureResponse(); // observer path has no pre-send snapshot
+          break;
+        }
+      }
+    }
+
+    const callback = (mutations) => {
+      if (!isContextValid()) {
+        observer?.disconnect();
+        return;
+      }
+      for (const mutation of mutations) {
+        if (mutation.type === 'childList') {
+          for (const node of mutation.addedNodes) handleNode(node);
+        }
+      }
+    };
+
+    const startObserving = () => {
+      if (!isContextValid()) return;
+      // Sites that know their conversation container can narrow the root via
+      // config.observerRoot; default keeps the historical main/body fallback.
+      const root = (config.observerRoot && config.observerRoot()) ||
+                   document.querySelector('main') ||
+                   document.body;
+      observer = new MutationObserver(callback);
+      observer.observe(root, { childList: true, subtree: true });
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', startObserving);
+    } else {
+      startObserving();
+    }
+  }
+
+  // ===== Controller factory =====
+  function createController(config) {
+    const { aiType, name } = config;
+
+    // Notify background that content script is ready
+    safeSendMessage({ type: 'CONTENT_SCRIPT_READY', aiType });
+
+    const capture = createCapture(config);
+    createResponseObserver(config, capture);
+
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message.type === 'INJECT_MESSAGE') {
+        injectMessage(message.message)
+          .then(() => sendResponse({ success: true }))
+          .catch(err => sendResponse({ success: false, error: err.message }));
+        return true;
+      }
+
+      if (message.type === 'INJECT_FILES' && config.injectFiles) {
+        config.injectFiles(message.files)
+          .then(() => sendResponse({ success: true }))
+          .catch(err => sendResponse({ success: false, error: err.message }));
+        return true;
+      }
+
+      if (message.type === 'GET_LATEST_RESPONSE') {
+        sendResponse({ content: config.getLatestResponse() });
+        return true;
+      }
+    });
+
+    async function injectMessage(text) {
+      // Some sites need a login/session check before we touch the composer
+      if (config.loginCheck) config.loginCheck();
+
+      const inputEl = window.AIPanelDom?.findInputField(config.inputSelectors, { preferBottom: true });
+      if (!inputEl) throw new Error(`Could not find ${name} input field`);
+
+      await window.AIPanelDom.setEditorText(inputEl, text, { afterInputDelay: config.afterInputDelay ?? 500 });
+
+      const submitResult = await window.AIPanelDom.submitMessage(inputEl, config.submitOptions);
+      console.log('[AI Panel]', name, 'message sent via', submitResult.method, 'starting response capture...');
+
+      // Record content BEFORE the new response appears, so we only capture NEW content
+      const preSendContent = config.getLatestResponse() || '';
+      capture.captureResponse({ preSendContent });
+      return true;
+    }
+  }
+
+  console.log('[AI Panel] base loaded');
+
+  window.AIPanelBase = {
+    boot,
+    base64ToFiles,
+    createController,
+    isVisible,
+    sleep,
+    _test: { createCapture }
+  };
+})();
