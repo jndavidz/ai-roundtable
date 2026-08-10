@@ -45,6 +45,10 @@ const fileList = document.getElementById('file-list');
 // Selected files storage
 let selectedFiles = [];
 
+// Connection state per AI — drives the status dots everywhere (normal mode,
+// discussion mode and the role-map pickers in debate mode).
+const roleStatusState = {};
+
 // Discussion Mode State
 let discussionState = {
   active: false,
@@ -135,6 +139,44 @@ function setupEventListeners() {
     });
   });
 
+  // Command help toggle (? button in the toolbar) — shows the help panel
+  // that sits directly under the command bar
+  const helpToggleBtn = document.getElementById('help-toggle-btn');
+  const helpPanel = document.getElementById('help-panel');
+  if (helpToggleBtn && helpPanel) {
+    helpToggleBtn.addEventListener('click', () => {
+      const expanded = !helpPanel.classList.toggle('hidden');
+      helpToggleBtn.setAttribute('aria-expanded', String(expanded));
+      helpToggleBtn.title = expanded ? '收起命令帮助' : '命令帮助';
+    });
+  }
+
+  // Copyright button (©) — popover with the original author
+  const copyrightBtn = document.getElementById('copyright-btn');
+  const copyrightPopover = document.getElementById('copyright-popover');
+  if (copyrightBtn && copyrightPopover) {
+    let copyrightTimer = null;
+    copyrightBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const shown = copyrightPopover.classList.toggle('hidden') === false;
+      copyrightBtn.setAttribute('aria-expanded', String(shown));
+      clearTimeout(copyrightTimer);
+      if (shown) {
+        copyrightTimer = setTimeout(() => {
+          copyrightPopover.classList.add('hidden');
+          copyrightBtn.setAttribute('aria-expanded', 'false');
+        }, 2500);
+      }
+    });
+    // Click anywhere else closes the popover
+    document.addEventListener('click', (e) => {
+      if (!copyrightBtn.contains(e.target) && !copyrightPopover.contains(e.target)) {
+        copyrightPopover.classList.add('hidden');
+        copyrightBtn.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
+
   // Listen for messages from background script
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'TAB_STATUS_UPDATE') {
@@ -170,12 +212,31 @@ async function checkConnectedTabs() {
   try {
     const tabs = await chrome.tabs.query({});
 
+    // First pass: light up dots from the URL so there's instant feedback.
     for (const tab of tabs) {
       const aiType = getAITypeFromUrl(tab.url);
       if (aiType) {
         updateTabStatus(aiType, true);
       }
     }
+
+    // Second pass: a green dot should mean "this model can actually receive
+    // messages". Ping each known AI's content script; a tab that exists but
+    // has no live content script gets a red dot instead of a misleading green
+    // (the ping also re-injects a missing script). AIs with no tab at all
+    // keep the default gray dot.
+    await Promise.all(AI_TYPES.map(async (aiType) => {
+      try {
+        const res = await chrome.runtime.sendMessage({ type: 'CHECK_CONNECTION', aiType });
+        if (res?.connected) {
+          updateTabStatus(aiType, true);
+        } else if (res?.reason !== 'no-tab') {
+          updateTabStatus(aiType, false);
+        }
+      } catch (err) {
+        // Message channel error — leave the dot in its current state
+      }
+    }));
   } catch (err) {
     log('Error checking tabs: ' + err.message, 'error');
   }
@@ -220,6 +281,7 @@ function getAITypeFromUrl(url) {
 }
 
 function updateTabStatus(aiType, connected) {
+  roleStatusState[aiType] = connected;
   // Normal mode status dot
   const statusEl = document.getElementById(`status-${aiType}`);
   if (statusEl) {
@@ -232,6 +294,11 @@ function updateTabStatus(aiType, connected) {
     discStatusEl.className = 'status ' + (connected ? 'connected' : 'disconnected');
     discStatusEl.title = connected ? '已连接' : '未找到';
   }
+  // Role-map picker status dots (debate mode) — one per model option
+  document.querySelectorAll(`[data-role-status="${aiType}"]`).forEach(el => {
+    el.className = 'status ' + (connected ? 'connected' : 'disconnected');
+    el.title = connected ? '已连接' : '未找到';
+  });
 }
 
 async function handleSend() {
@@ -261,20 +328,18 @@ async function handleSend() {
 
   sendBtn.disabled = true;
 
-  // Clear input immediately after sending
-  messageInput.value = '';
-
   // Send files first if any
   const filesToSend = [...selectedFiles];
   if (filesToSend.length > 0) {
     log(`正在上传 ${filesToSend.length} 个文件...`);
-    for (const target of targets) {
-      await sendFilesToAI(target, filesToSend);
-    }
+    // Each target is a different tab, so uploads can run in parallel
+    await Promise.all(targets.map(target => sendFilesToAI(target, filesToSend)));
     clearFiles();
     // Wait a bit for files to be processed before sending message
     await new Promise(r => setTimeout(r, 500));
   }
+
+  let messageSent = false;
 
   try {
     // If mutual review, handle specially
@@ -283,22 +348,30 @@ async function handleSend() {
         log('Mutual review requires at least 2 AIs selected', 'error');
       } else {
         log(`Mutual review: ${targets.join(', ')}`);
-        await handleMutualReview(targets, parsed.prompt);
+        messageSent = await handleMutualReview(targets, parsed.prompt);
       }
     }
     // If cross-reference, handle specially
     else if (parsed.crossRef) {
       log(`Cross-reference: ${parsed.targetAIs.join(', ')} <- ${parsed.sourceAIs.join(', ')}`);
-      await handleCrossReference(parsed);
+      messageSent = await handleCrossReference(parsed);
     } else {
-      // Send to target(s)
+      // Send to target(s) in parallel — each target lives in its own tab, so
+      // the sends are independent and don't interfere with each other
       log(`Sending to: ${targets.join(', ')}`);
-      for (const target of targets) {
-        await sendToAI(target, message);
-      }
+      const results = await Promise.all(targets.map(target => sendToAI(target, message)));
+      messageSent = results.some(r => r?.success);
     }
   } catch (err) {
     log('Error: ' + err.message, 'error');
+  }
+
+  // Only clear the input once the message actually reached at least one model.
+  // If every send failed, keep the user's text so they can retry.
+  if (messageSent) {
+    messageInput.value = '';
+  } else {
+    log('发送失败，已保留输入内容，可直接重试', 'error');
   }
 
   sendBtn.disabled = false;
@@ -397,16 +470,17 @@ function parseMessage(message) {
 }
 
 async function handleCrossReference(parsed) {
-  // Get responses from all source AIs
-  const sourceResponses = [];
-
-  for (const sourceAI of parsed.sourceAIs) {
+  // Get responses from all source AIs (parallel — different tabs)
+  const sourceResponses = await Promise.all(parsed.sourceAIs.map(async (sourceAI) => {
     const response = await getLatestResponse(sourceAI);
+    return { ai: sourceAI, response };
+  }));
+
+  for (const { ai, response } of sourceResponses) {
     if (!response) {
-      log(`Could not get ${sourceAI}'s response`, 'error');
-      return;
+      log(`Could not get ${ai}'s response`, 'error');
+      return false;
     }
-    sourceResponses.push({ ai: sourceAI, content: response });
   }
 
   // Build the full message with XML tags for each source
@@ -415,14 +489,15 @@ async function handleCrossReference(parsed) {
   for (const source of sourceResponses) {
     fullMessage += `
 <${source.ai}_response>
-${source.content}
+${source.response}
 </${source.ai}_response>`;
   }
 
-  // Send to all target AIs
-  for (const targetAI of parsed.targetAIs) {
-    await sendToAI(targetAI, fullMessage);
-  }
+  // Send to all target AIs in parallel
+  const results = await Promise.all(
+    parsed.targetAIs.map(targetAI => sendToAI(targetAI, fullMessage))
+  );
+  return results.some(r => r?.success);
 }
 
 // ============================================
@@ -430,16 +505,20 @@ ${source.content}
 // ============================================
 
 async function handleMutualReview(participants, prompt) {
-  // Get current responses from all participants
+  // Get current responses from all participants (parallel — different tabs)
   const responses = {};
 
   log(`[Mutual] Fetching responses from ${participants.join(', ')}...`);
 
-  for (const ai of participants) {
+  const responseEntries = await Promise.all(participants.map(async (ai) => {
     const response = await getLatestResponse(ai);
+    return { ai, response };
+  }));
+
+  for (const { ai, response } of responseEntries) {
     if (!response || response.trim().length === 0) {
       log(`[Mutual] Could not get ${ai}'s response - make sure ${ai} has replied first`, 'error');
-      return;
+      return false;
     }
     responses[ai] = response;
     log(`[Mutual] Got ${ai}'s response (${response.length} chars)`);
@@ -447,8 +526,8 @@ async function handleMutualReview(participants, prompt) {
 
   log(`[Mutual] All responses collected. Sending cross-evaluations...`);
 
-  // For each AI, send them the responses from all OTHER AIs
-  for (const targetAI of participants) {
+  // For each AI, send them the responses from all OTHER AIs (parallel)
+  const results = await Promise.all(participants.map(async (targetAI) => {
     const otherAIs = participants.filter(ai => ai !== targetAI);
 
     // Build message with all other AIs' responses
@@ -465,10 +544,16 @@ ${responses[sourceAI]}
     evalMessage += `\n${prompt}`;
 
     log(`[Mutual] Sending to ${targetAI}: ${otherAIs.join('+')} responses + prompt`);
-    await sendToAI(targetAI, evalMessage);
-  }
+    return await sendToAI(targetAI, evalMessage);
+  }));
 
-  log(`[Mutual] Complete! All ${participants.length} AIs received cross-evaluations`, 'success');
+  const allSucceeded = results.every(r => r?.success);
+  if (allSucceeded) {
+    log(`[Mutual] Complete! All ${participants.length} AIs received cross-evaluations`, 'success');
+  } else {
+    log(`[Mutual] 部分 AI 未收到交叉评价，请查看日志`, 'error');
+  }
+  return allSucceeded;
 }
 
 async function getLatestResponse(aiType) {
@@ -476,6 +561,10 @@ async function getLatestResponse(aiType) {
     chrome.runtime.sendMessage(
       { type: 'GET_RESPONSE', aiType },
       (response) => {
+        if (chrome.runtime.lastError) {
+          resolve(null); // Background unreachable — treat as no response
+          return;
+        }
         resolve(response?.content || null);
       }
     );
@@ -487,6 +576,12 @@ async function sendToAI(aiType, message) {
     chrome.runtime.sendMessage(
       { type: 'SEND_MESSAGE', aiType, message },
       (response) => {
+        // Background may be asleep or the channel may have closed — resolve
+        // instead of hanging so multi-model loops can't stall forever
+        if (chrome.runtime.lastError) {
+          resolve({ success: false, error: chrome.runtime.lastError.message });
+          return;
+        }
         if (response?.success) {
           log(`Sent to ${aiType}`, 'success');
         } else {
@@ -517,6 +612,16 @@ function log(message, type = 'info') {
   // Keep only last 50 entries
   while (logContainer.children.length > 50) {
     logContainer.removeChild(logContainer.lastChild);
+  }
+
+  // Auto-expand the collapsed activity log on errors so send failures and
+  // other problems aren't silently hidden away.
+  if (type === 'error') {
+    const section = document.getElementById('log-section');
+    if (section?.classList.contains('log-collapsed')) {
+      section.classList.remove('log-collapsed');
+      document.getElementById('log-toggle')?.setAttribute('aria-expanded', 'true');
+    }
   }
 }
 
@@ -637,15 +742,25 @@ async function startDiscussion() {
 
   log(`讨论开始: ${selected.map(getAIName).join(' vs ')}`, 'success');
 
+  // Upload selected files to both participants first
+  const filesToSend = [...selectedFiles];
+  if (filesToSend.length > 0) {
+    log(`正在上传 ${filesToSend.length} 个文件...`);
+    await Promise.all(selected.map(ai => sendFilesToAI(ai, filesToSend)));
+    clearFiles();
+    // Wait a bit for files to be processed before sending the topic
+    await new Promise(r => setTimeout(r, 500));
+  }
+
   // Auto-open split-screen dashboard
   publishDiscussionStatus();
   chrome.runtime.sendMessage({ type: 'OPEN_SPLITVIEW' });
   log('[分屏视图] 已自动打开');
 
-  // Send topic to both AIs
-  for (const ai of selected) {
-    await sendToAI(ai, `Please share your thoughts on the following topic:\n\n${topic}`);
-  }
+  // Send topic to both AIs in parallel (different tabs)
+  await Promise.all(selected.map(ai =>
+    sendToAI(ai, `Please share your thoughts on the following topic:\n\n${topic}`)
+  ));
 }
 
 function handleDiscussionResponse(aiType, content) {
@@ -737,8 +852,10 @@ ${ai1Response}
 
 Please evaluate this response. What do you agree with? What do you disagree with? What would you add or change?`;
 
-  await sendToAI(ai1, msg1);
-  await sendToAI(ai2, msg2);
+  await Promise.all([
+    sendToAI(ai1, msg1),
+    sendToAI(ai2, msg2)
+  ]);
 }
 
 async function handleInterject() {
@@ -762,9 +879,11 @@ async function handleInterject() {
 
   log(`[插话] 正在获取双方最新回复...`);
 
-  // Get latest responses from both participants
-  const ai1Response = await getLatestResponse(ai1);
-  const ai2Response = await getLatestResponse(ai2);
+  // Get latest responses from both participants (parallel)
+  const [ai1Response, ai2Response] = await Promise.all([
+    getLatestResponse(ai1),
+    getLatestResponse(ai2)
+  ]);
 
   if (!ai1Response || !ai2Response) {
     log(`[插话] 无法获取回复，请确保双方都已回复`, 'error');
@@ -792,8 +911,10 @@ ${ai2Response}
 ${ai1Response}
 </${ai1}_response>`;
 
-  await sendToAI(ai1, msg1);
-  await sendToAI(ai2, msg2);
+  await Promise.all([
+    sendToAI(ai1, msg1),
+    sendToAI(ai2, msg2)
+  ]);
 
   log(`[插话] 已发送给双方（含对方回复）`, 'success');
 
@@ -836,8 +957,10 @@ ${historyText}`;
 
   log(`[Summary] 正在请求双方生成总结...`);
   publishDiscussionStatus();
-  await sendToAI(ai1, summaryPrompt);
-  await sendToAI(ai2, summaryPrompt);
+  await Promise.all([
+    sendToAI(ai1, summaryPrompt),
+    sendToAI(ai2, summaryPrompt)
+  ]);
 
   // Wait for both responses, then show summary.
   // Poll the pending set (events for the summary phase already funnel through
@@ -973,7 +1096,11 @@ function escapeHtml(text) {
 // ============================================
 
 function setupFileUpload() {
-  addFileBtn.addEventListener('click', () => fileInput.click());
+  // All attach buttons (normal / discussion / debate composers) open the same
+  // shared file picker
+  document.querySelectorAll('.add-file-btn').forEach(btn => {
+    btn.addEventListener('click', () => fileInput.click());
+  });
 
   fileInput.addEventListener('change', (e) => {
     const files = Array.from(e.target.files);
@@ -1004,17 +1131,20 @@ function removeFile(index) {
 }
 
 function renderFileList() {
-  fileList.innerHTML = '';
+  // Render the shared file list into every visible mode's file-list container
+  document.querySelectorAll('.file-list').forEach(list => {
+    list.innerHTML = '';
 
-  selectedFiles.forEach((file, index) => {
-    const item = document.createElement('div');
-    item.className = 'file-item';
-    item.innerHTML = `
-      <span class="file-name" title="${file.name}">${file.name}</span>
-      <button class="remove-file" title="移除">&times;</button>
-    `;
-    item.querySelector('.remove-file').addEventListener('click', () => removeFile(index));
-    fileList.appendChild(item);
+    selectedFiles.forEach((file, index) => {
+      const item = document.createElement('div');
+      item.className = 'file-item';
+      item.innerHTML = `
+        <span class="file-name" title="${file.name}">${file.name}</span>
+        <button class="remove-file" title="移除">&times;</button>
+      `;
+      item.querySelector('.remove-file').addEventListener('click', () => removeFile(index));
+      list.appendChild(item);
+    });
   });
 }
 
@@ -1049,6 +1179,11 @@ async function sendFilesToAI(aiType, files) {
     chrome.runtime.sendMessage(
       { type: 'SEND_FILES', aiType, files: fileDataArray },
       (response) => {
+        if (chrome.runtime.lastError) {
+          log(`${aiType}: 文件上传失败 - ${chrome.runtime.lastError.message}`, 'error');
+          resolve({ success: false, error: chrome.runtime.lastError.message });
+          return;
+        }
         if (response?.success) {
           log(`${aiType}: 文件上传成功 (${files.length} 个)`, 'success');
         } else {
@@ -1097,6 +1232,9 @@ function setupPersonaDebateMode() {
     document.getElementById('import-role-map-input').click();
   });
   document.getElementById('import-role-map-input').addEventListener('change', importRoleMapConfig);
+
+  // Click anywhere outside a picker closes any open role-model dropdown
+  document.addEventListener('click', closeRoleModelMenus);
 }
 
 function populateRoleMap() {
@@ -1125,22 +1263,116 @@ function populateRoleMap() {
     tag.title = '点击自定义角色';
     tag.addEventListener('click', () => openRoleEditor(role.key));
 
+    // Hidden native select keeps the existing value-based readers working
+    // (startPersonaDebate / saveRoleAIMap / export & import configs). The
+    // visible UI is the custom picker rendered next to it.
     const select = document.createElement('select');
     select.id = `map-${role.key}`;
+    select.className = 'role-map-select-hidden';
     for (const opt of AI_MODEL_OPTIONS) {
       const option = document.createElement('option');
       option.value = opt.value;
       option.textContent = opt.label;
-      if (personaDebateState.roleAIMap[role.key] === opt.value) {
-        option.selected = true;
-      }
       select.appendChild(option);
     }
+    select.value = personaDebateState.roleAIMap[role.key] || DEFAULT_ROLE_AI_MAP[role.key];
 
     row.appendChild(tag);
+    row.appendChild(buildRoleModelPicker(role.key, select));
     row.appendChild(select);
     container.appendChild(row);
   }
+}
+
+/**
+ * Custom dropdown for a role's model choice. Each option shows the model name
+ * with a live status dot on the right (kept in sync via updateTabStatus →
+ * [data-role-status]). Selecting an option writes back to the hidden select.
+ */
+function buildRoleModelPicker(role, select) {
+  const picker = document.createElement('div');
+  picker.className = 'role-model-picker';
+  picker.dataset.rolePicker = role;
+
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'role-model-trigger';
+  trigger.innerHTML =
+    `<span class="role-model-label">${getAIName(select.value)}</span>` +
+    `<span class="role-model-caret">▾</span>`;
+
+  const menu = document.createElement('div');
+  menu.className = 'role-model-menu hidden';
+
+  for (const opt of AI_MODEL_OPTIONS) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'role-model-option' + (opt.value === select.value ? ' selected' : '');
+    item.dataset.value = opt.value;
+
+    const name = document.createElement('span');
+    name.className = 'role-model-name';
+    name.textContent = opt.label;
+
+    const status = document.createElement('span');
+    status.className = 'status';
+    status.dataset.roleStatus = opt.value;
+    const connected = roleStatusState[opt.value];
+    if (connected !== undefined) {
+      status.className = 'status ' + (connected ? 'connected' : 'disconnected');
+    }
+
+    item.appendChild(name);
+    item.appendChild(status);
+
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      select.value = opt.value;
+      picker.querySelector('.role-model-label').textContent = getAIName(opt.value);
+      menu.querySelectorAll('.role-model-option').forEach(o =>
+        o.classList.toggle('selected', o === item)
+      );
+      closeRoleModelMenus();
+    });
+
+    menu.appendChild(item);
+  }
+
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wasOpen = !menu.classList.contains('hidden');
+    closeRoleModelMenus();
+    if (!wasOpen) {
+      menu.classList.remove('hidden');
+      picker.classList.add('open');
+    }
+  });
+
+  picker.appendChild(trigger);
+  picker.appendChild(menu);
+  return picker;
+}
+
+function closeRoleModelMenus() {
+  document.querySelectorAll('.role-model-picker.open').forEach(p => {
+    p.classList.remove('open');
+    const menu = p.querySelector('.role-model-menu');
+    if (menu) menu.classList.add('hidden');
+  });
+}
+
+// After the hidden selects are backfilled (load/import), reflect the value on
+// the visible picker triggers.
+function syncRoleMapPickers() {
+  document.querySelectorAll('.role-model-picker').forEach(picker => {
+    const role = picker.dataset.rolePicker;
+    const select = document.getElementById('map-' + role);
+    const label = picker.querySelector('.role-model-label');
+    if (select && label) label.textContent = getAIName(select.value);
+    picker.querySelectorAll('.role-model-option').forEach(o =>
+      o.classList.toggle('selected', o.dataset.value === select?.value)
+    );
+  });
 }
 
 // ============================================
@@ -1222,7 +1454,7 @@ function loadCustomPersonas() {
   });
 }
 
-function startPersonaDebate() {
+async function startPersonaDebate() {
   // Read UI values into state
   personaDebateState.topic = document.getElementById('persona-topic').value.trim();
   if (!personaDebateState.topic) {
@@ -1240,6 +1472,17 @@ function startPersonaDebate() {
 
   // Save mapping for next session
   saveRoleAIMap();
+
+  // Upload selected files to all mapped AIs first
+  const filesToSend = [...selectedFiles];
+  if (filesToSend.length > 0) {
+    const uniqueAIs = [...new Set(Object.values(personaDebateState.roleAIMap))];
+    log(`正在上传 ${filesToSend.length} 个文件到 ${uniqueAIs.length} 个模型...`);
+    await Promise.all(uniqueAIs.map(ai => sendFilesToAI(ai, filesToSend)));
+    clearFiles();
+    // Wait a bit for files to be processed before starting the debate
+    await new Promise(r => setTimeout(r, 500));
+  }
 
   // Auto-open split-screen dashboard in a new tab
   publishDebateStatus();
@@ -1515,6 +1758,7 @@ async function loadRoleAIMap() {
         const sel = document.getElementById('map-' + role);
         if (sel) sel.value = personaDebateState.roleAIMap[role];
       }
+      syncRoleMapPickers();
     }
   } catch (err) {
     console.log('[AI Panel] Failed to load role-AI map:', err.message);
@@ -1583,6 +1827,7 @@ function importRoleMapConfig(e) {
         }
       }
       saveRoleAIMap();
+      syncRoleMapPickers();
 
       // Apply custom persona overrides (only replaces what's in the file)
       const personas = config.personas || config.customPersonas || {};

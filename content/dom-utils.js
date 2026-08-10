@@ -394,9 +394,9 @@
         pressEnter(inputEl);
         await sleep(options.afterEnterDelay ?? 500);
 
-        // Try fast verification; if it fails, retry click + enter once more
+          // Try fast verification; if it fails, retry click + enter once more
         try {
-          await verifySubmissionStarted(inputEl, beforeText, options);
+          await verifySubmissionStarted(inputEl, beforeText, options, button);
           return { method: 'button+enter-fallback' };
         } catch (firstErr) {
           // Retry: click button again, then press Enter
@@ -404,26 +404,26 @@
           await sleep(options.afterClickDelay ?? 700);
           pressEnter(inputEl);
           await sleep(options.afterEnterDelay ?? 500);
-          await verifySubmissionStarted(inputEl, beforeText, options);
+          await verifySubmissionStarted(inputEl, beforeText, options, button);
           return { method: 'button+enter-retry' };
         }
       }
 
-      await verifySubmissionStarted(inputEl, beforeText, options);
+      await verifySubmissionStarted(inputEl, beforeText, options, button);
       return { method: 'button' };
     }
 
     if (options.enterFallback !== false) {
       pressEnter(inputEl);
       await sleep(options.afterEnterDelay ?? 500);
-      await verifySubmissionStarted(inputEl, beforeText, options);
+      await verifySubmissionStarted(inputEl, beforeText, options, null);
       return { method: 'enter' };
     }
 
     throw new Error('Could not find enabled send button');
   }
 
-  async function verifySubmissionStarted(inputEl, beforeText, options = {}) {
+  async function verifySubmissionStarted(inputEl, beforeText, options = {}, button = null) {
     if (options.verifySubmitted === false || !beforeText) return true;
 
     const start = Date.now();
@@ -435,7 +435,12 @@
         return true;
       }
 
-      // Priority 2: check if input text was cleared (common for textarea inputs)
+      // Priority 2: the clicked send button became disabled or was removed
+      // from the DOM — the click registered even when the site's editor keeps
+      // the input text populated (e.g. Gemini keeps a hidden textarea filled).
+      if (button && (!document.contains(button) || isDisabled(button))) return true;
+
+      // Priority 3: check if input text was cleared (common for textarea inputs)
       const currentText = getElementText(inputEl).trim();
       if (!currentText || currentText !== beforeText) return true;
 

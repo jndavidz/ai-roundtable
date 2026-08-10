@@ -9,6 +9,10 @@
 <body>
   <div class="container">
     <header>
+      <div class="copyright-wrap">
+        <button type="button" class="copyright-btn" id="copyright-btn" title="原作者：AXTONLIU" aria-haspopup="true" aria-expanded="false">©</button>
+        <div class="copyright-popover hidden" id="copyright-popover">原作者：AXTONLIU</div>
+      </div>
       <h1>AI 圆桌</h1>
       <p class="subtitle">Multi-AI Roundtable</p>
     </header>
@@ -44,7 +48,7 @@
     <div id="normal-mode">
       <section class="targets">
       <label class="target-label">
-        <input type="checkbox" id="target-claude" checked>
+        <input type="checkbox" id="target-claude">
         <span class="target-name claude">Claude</span>
         <span class="status" id="status-claude"></span>
       </label>
@@ -54,7 +58,7 @@
         <span class="status" id="status-chatgpt"></span>
       </label>
       <label class="target-label">
-        <input type="checkbox" id="target-grok">
+        <input type="checkbox" id="target-grok" checked>
         <span class="target-name grok">Grok</span>
         <span class="status" id="status-grok"></span>
       </label>
@@ -64,27 +68,27 @@
         <span class="status" id="status-gemini"></span>
       </label>
       <label class="target-label">
-        <input type="checkbox" id="target-deepseek">
+        <input type="checkbox" id="target-deepseek" checked>
         <span class="target-name deepseek">深度求索</span>
         <span class="status" id="status-deepseek"></span>
       </label>
       <label class="target-label">
-        <input type="checkbox" id="target-glm">
+        <input type="checkbox" id="target-glm" checked>
         <span class="target-name glm">智谱</span>
         <span class="status" id="status-glm"></span>
       </label>
       <label class="target-label">
-        <input type="checkbox" id="target-kimi">
+        <input type="checkbox" id="target-kimi" checked>
         <span class="target-name kimi">月之暗面</span>
         <span class="status" id="status-kimi"></span>
       </label>
       <label class="target-label">
-        <input type="checkbox" id="target-qianwen">
+        <input type="checkbox" id="target-qianwen" checked>
         <span class="target-name qianwen">通义千问</span>
         <span class="status" id="status-qianwen"></span>
       </label>
       <label class="target-label">
-        <input type="checkbox" id="target-mimo">
+        <input type="checkbox" id="target-mimo" checked>
         <span class="target-name mimo">MiMo</span>
         <span class="status" id="status-mimo"></span>
       </label>
@@ -120,6 +124,7 @@
             <option value="supplement">补充</option>
             <option value="compare">对比</option>
           </select>
+          <button class="help-btn" id="help-toggle-btn" title="命令帮助" aria-expanded="false">?</button>
         </div>
         <div class="toolbar-divider"></div>
         <div class="toolbar-group mentions">
@@ -137,33 +142,9 @@
           <button class="mention-btn" data-mention="@Doubao" title="引用 豆包">@Doubao</button>
         </div>
       </div>
-      <textarea
-        id="message-input"
-        placeholder="输入消息...&#10;&#10;互评: /mutual（基于当前回复）&#10;单向: @Claude 评价一下 @ChatGPT"
-        rows="6"
-      ></textarea>
-      <!-- Bottom Action Bar -->
-      <div class="action-bar">
-        <input type="file" id="file-input" multiple hidden accept="image/*,.pdf,.txt,.md,.json,.csv,.xml,.html,.css,.js,.ts,.py">
-        <button type="button" id="add-file-btn" class="add-file-btn" title="添加文件">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-          </svg>
-        </button>
-        <div id="file-list" class="file-list"></div>
-        <button id="send-btn">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="22" y1="2" x2="11" y2="13"/>
-            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-          </svg>
-          发送
-        </button>
-      </div>
-    </section>
 
-    <section class="help">
-      <details>
-        <summary>命令帮助</summary>
+      <!-- Command help (toggled by the ? button in the toolbar above) -->
+      <div class="help help-panel hidden" id="help-panel">
         <p class="help-subtitle">互评 /mutual（推荐）</p>
         <ul>
           <li><code>/mutual</code><br><small>让所有选中的 AI 互评当前回复</small></li>
@@ -174,8 +155,32 @@
           <li><code>@Claude 评价一下 @ChatGPT</code></li>
           <li><code>/cross @Claude @Gemini <- @ChatGPT</code></li>
         </ul>
-      </details>
+      </div>
+
+      <div class="composer-wrap">
+        <textarea
+          id="message-input"
+          placeholder="输入消息...&#10;&#10;互评: /mutual（基于当前回复）&#10;单向: @Claude 评价一下 @ChatGPT"
+          rows="6"
+        ></textarea>
+        <input type="file" id="file-input" multiple hidden accept="image/*,.pdf,.txt,.md,.json,.csv,.xml,.html,.css,.js,.ts,.py">
+        <div class="composer-actions">
+          <button type="button" id="add-file-btn" class="add-file-btn" title="添加文件">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+            </svg>
+          </button>
+          <button id="send-btn" title="发送">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"/>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div id="file-list" class="file-list"></div>
     </section>
+
     </div><!-- end normal-mode -->
 
     <!-- Discussion Mode Content -->
@@ -186,12 +191,12 @@
           <label>参与者：</label>
           <div class="participant-options">
             <label class="participant-option">
-              <input type="checkbox" name="participant" value="claude" checked>
+              <input type="checkbox" name="participant" value="claude">
               <span class="target-name claude">Claude</span>
               <span class="status" id="status-claude-disc"></span>
             </label>
             <label class="participant-option">
-              <input type="checkbox" name="participant" value="chatgpt" checked>
+              <input type="checkbox" name="participant" value="chatgpt">
               <span class="target-name chatgpt">ChatGPT</span>
               <span class="status" id="status-chatgpt-disc"></span>
             </label>
@@ -206,12 +211,12 @@
               <span class="status" id="status-gemini-disc"></span>
             </label>
             <label class="participant-option">
-              <input type="checkbox" name="participant" value="deepseek">
+              <input type="checkbox" name="participant" value="deepseek" checked>
               <span class="target-name deepseek">深度求索</span>
               <span class="status" id="status-deepseek-disc"></span>
             </label>
             <label class="participant-option">
-              <input type="checkbox" name="participant" value="glm">
+              <input type="checkbox" name="participant" value="glm" checked>
               <span class="target-name glm">智谱</span>
               <span class="status" id="status-glm-disc"></span>
             </label>
@@ -248,17 +253,26 @@
           </div>
           <p class="hint">请选择 2 位参与者</p>
         </div>
-        <textarea
-          id="discussion-topic"
-          placeholder="输入讨论主题...&#10;&#10;示例：微服务架构和单体架构各有什么优缺点？"
-          rows="4"
-        ></textarea>
-        <button id="start-discussion-btn">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="5 3 19 12 5 21 5 3"/>
-          </svg>
-          开始讨论
-        </button>
+        <div class="composer-wrap composer-compact">
+          <textarea
+            id="discussion-topic"
+            placeholder="输入讨论主题...&#10;&#10;示例：微服务架构和单体架构各有什么优缺点？"
+            rows="4"
+          ></textarea>
+          <div class="composer-actions">
+            <button type="button" id="discussion-add-file-btn" class="add-file-btn" title="添加文件">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+              </svg>
+            </button>
+            <button id="start-discussion-btn" title="开始讨论">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div id="discussion-file-list" class="file-list"></div>
       </section>
 
       <section class="discussion-active hidden" id="discussion-active">
@@ -333,8 +347,10 @@
         <h3>4 人格辩论</h3>
 
         <div class="field">
-          <label for="persona-topic">讨论议题</label>
-          <textarea id="persona-topic" rows="3" placeholder="输入要辩论的议题...&#10;示例：AI 是否应该拥有自我删除的权利？"></textarea>
+          <label>角色 — 模型映射</label>
+          <div class="role-map" id="role-map-container">
+            <!-- Populated dynamically by panel.js -->
+          </div>
         </div>
 
         <div class="field">
@@ -347,10 +363,7 @@
         </div>
 
         <div class="field">
-          <label>角色 — 模型映射</label>
-          <div class="role-map" id="role-map-container">
-            <!-- Populated dynamically by panel.js -->
-          </div>
+          <label>导入/导出设置</label>
           <div class="role-map-actions">
             <input type="file" id="import-role-map-input" accept=".json" hidden>
             <button class="role-map-btn" id="export-role-map-btn" title="导出角色-模型映射和自定义角色设置为 JSON 文件">
@@ -370,6 +383,26 @@
               导入设置
             </button>
           </div>
+        </div>
+
+        <div class="field">
+          <label for="persona-topic">辩论议题</label>
+          <div class="composer-wrap composer-compact">
+            <textarea id="persona-topic" rows="3" placeholder="输入要辩论的议题...&#10;示例：AI 是否应该拥有自我删除的权利？"></textarea>
+            <div class="composer-actions">
+              <button type="button" id="persona-add-file-btn" class="add-file-btn" title="添加文件">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                </svg>
+              </button>
+              <button id="start-persona-debate" title="开始辩论">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="5 3 19 12 5 21 5 3"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div id="persona-file-list" class="file-list"></div>
         </div>
 
         <!-- Role Customization Editor (hidden by default) -->
@@ -407,14 +440,6 @@
           </div>
         </div>
 
-        <div class="debate-actions">
-          <button id="start-persona-debate" class="primary-btn">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="5 3 19 12 5 21 5 3"/>
-            </svg>
-            开始辩论
-          </button>
-        </div>
       </section>
 
       <div class="debate-active-area hidden" id="debate-active-area">
@@ -448,10 +473,6 @@
         <div id="log-container"></div>
       </div>
     </section>
-
-    <footer class="copyright">
-      © AXTONLIU™ & AI 精英学院™
-    </footer>
   </div>
 
   <script src="personas.js"></script>

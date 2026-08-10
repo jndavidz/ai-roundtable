@@ -24,6 +24,7 @@
   window.AIPanelBase.createController({
     aiType: AI_TYPE,
     name: 'Hunyuan',
+    afterInputDelay: 600, // give Tencent's React editor time to register the text
 
     loginCheck: function() {
       if (window.location.pathname.includes('/login') ||
@@ -60,7 +61,10 @@
       allowUnlabeledNearInput: true,
       enterFallback: true,
       maxWait: 6000,
-      verifyMaxWait: 3000,
+      // Longer verify window: the send button may not change state immediately
+      // after the click, which previously caused false "Submit did not start"
+      // errors even though the message was actually submitted.
+      verifyMaxWait: 5000,
       submittingSelectors: [
         '[aria-label*="停止"]',
         '[aria-label*="Stop"]',

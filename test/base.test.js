@@ -125,6 +125,32 @@ function loadBase() {
     throw new Error(`expected 'brand new text', got '${captured2[0].content}' — identical pre-send content was captured`);
   }
 
+  // ---- Test 4: observer-triggered capture is suppressed by cooldown ----
+  // After an inject-triggered capture reports, an observer-triggered capture
+  // within the cooldown window must NOT re-report the same response (this was
+  // producing duplicate "Response captured" messages for one response).
+  let text4 = 'fourth response';
+  const capture4 = base._test.createCapture({
+    aiType: 'test4',
+    name: 'Test4',
+    getLatestResponse: () => text4,
+    getStreamingSignal: () => false,
+    checkInterval: 10,
+    stableThreshold: 2,
+    maxWait: 2000
+  });
+
+  const p4 = capture4.captureResponse({ preSendContent: 'old' });
+  setTimeout(() => { text4 = 'fourth response'; }, 20);
+  await p4;
+
+  const before4 = messages.filter(m => m.type === 'RESPONSE_CAPTURED' && m.aiType === 'test4').length;
+  await capture4.captureResponse({ source: 'observer' });
+  const after4 = messages.filter(m => m.type === 'RESPONSE_CAPTURED' && m.aiType === 'test4').length;
+  if (after4 - before4 !== 0) {
+    throw new Error(`observer capture should be suppressed within cooldown, emitted ${after4 - before4}`);
+  }
+
   console.log('base capture tests passed');
 })().catch(err => {
   console.error(err);

@@ -101,6 +101,11 @@ async function handleMessage(message, sender) {
       // Query content script directly for real-time response (not from storage)
       return await getResponseFromContentScript(message.aiType);
 
+    case 'CHECK_CONNECTION':
+      // Liveness probe used by the side panel to verify a content script is
+      // actually reachable (and re-inject it if it went missing).
+      return await checkAIConnection(message.aiType);
+
     case 'RESPONSE_CAPTURED':
       // Content script captured a response
       await setStoredResponse(message.aiType, message.content);
@@ -175,6 +180,19 @@ async function handleSplitviewPoll() {
   return { debateStatus: status, responses };
 }
 
+async function checkAIConnection(aiType) {
+  try {
+    const tab = await findAITab(aiType);
+    if (!tab) return { connected: false, reason: 'no-tab' };
+    // Ping the content script; sendMessageToContentScript re-injects it if it
+    // went missing (e.g. the tab was opened before the extension was loaded).
+    await sendMessageToContentScript(tab, aiType, { type: 'PING' });
+    return { connected: true };
+  } catch (err) {
+    return { connected: false, reason: err.message };
+  }
+}
+
 async function getResponseFromContentScript(aiType) {
   try {
     const tab = await findAITab(aiType);
@@ -240,8 +258,19 @@ async function sendMessageToContentScript(tab, aiType, payload) {
 
     console.log('[AI Panel] Content script missing/stale for', aiType, 'injecting into tab:', tab.url);
     await injectContentScripts(tab.id, aiType);
-    await sleep(250);
-    return await chrome.tabs.sendMessage(tab.id, payload);
+
+    // Scripts boot synchronously (dom-utils → base → site), but a freshly
+    // injected or still-navigating page may take a moment to register its
+    // listener, so retry a couple of times with a small backoff.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await sleep(300 * attempt);
+      try {
+        return await chrome.tabs.sendMessage(tab.id, payload);
+      } catch (retryErr) {
+        if (!shouldRetryContentScriptError(retryErr)) throw retryErr;
+      }
+    }
+    throw new Error(`Content script for ${aiType} did not respond after injection`);
   }
 }
 
@@ -249,7 +278,13 @@ function shouldRetryContentScriptError(err) {
   const message = err?.message || '';
   return message.includes('Receiving end does not exist') ||
          message.includes('Extension context invalidated') ||
-         message.includes('Could not establish connection');
+         message.includes('Could not establish connection') ||
+         // The content script's async listener (return true) lost its response
+         // port before sendResponse — its context was destroyed mid-flight
+         // (e.g. the page navigated). Re-injecting and retrying is the best
+         // way to self-heal; the trade-off is a possible duplicate message.
+         message.includes('message channel closed before a response was received') ||
+         message.includes('message port closed before a response was received');
 }
 
 async function injectContentScripts(tabId, aiType) {

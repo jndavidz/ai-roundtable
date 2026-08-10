@@ -1,11 +1,12 @@
 # Private documentation (not for GitHub)
-CLAUDE.md
-AGENTS.md
 DEVELOPMENT_LOG.md
 SOFTWARE_DESIGN.md
 
 # Claude Code local config
 .claude/
+
+# ZCode 会话计划（本地瞬时产物，不跨机、不提交）
+.zcode/plans/
 
 # macOS
 .DS_Store

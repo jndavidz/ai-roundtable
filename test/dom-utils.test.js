@@ -65,6 +65,9 @@ function loadHelpers() {
       },
       querySelectorAll() {
         return [];
+      },
+      contains() {
+        return true;
       }
     },
     window: {
@@ -130,4 +133,31 @@ assert(
   'enabled send buttons should score higher than disabled send buttons'
 );
 
-console.log('dom-utils tests passed');
+(async () => {
+  const { verifySubmissionStarted } = helpers._test;
+
+  // verifySubmissionStarted: a clicked send button that became disabled (or was
+  // removed from the DOM) counts as "submission started", even if the editor
+  // keeps the input text populated (fixes Gemini false "Submit did not start").
+  const stillTyped = new FakeElement({ innerText: 'hello world' });
+  const disabledAfterClick = new FakeElement({ attrs: { 'aria-label': 'Send' }, disabled: true });
+  assert.strictEqual(
+    await verifySubmissionStarted(stillTyped, 'hello world', {}, disabledAfterClick),
+    true,
+    'button disabled after click should count as submitted'
+  );
+
+  // Without the disabled signal and with unchanged text, it must keep polling
+  // and finally report that submission did not start.
+  const enabledButton = new FakeElement({ attrs: { 'aria-label': 'Send' } });
+  await assert.rejects(
+    verifySubmissionStarted(stillTyped, 'hello world', { verifyMaxWait: 150 }, enabledButton),
+    /Submit did not start/,
+    'unchanged text with enabled button should time out'
+  );
+
+  console.log('dom-utils tests passed');
+})().catch(err => {
+  console.error(err);
+  process.exit(1);
+});

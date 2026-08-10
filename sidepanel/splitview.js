@@ -50,6 +50,7 @@ let lastRebuildKey = '';      // Track when to rebuild panels
 let prevCurrentSpeaker = null;
 let currentCustomPersonas = {};
 let pollTimer = null;
+let hadSession = false;       // Have we ever rendered a real session? (retains results after it ends)
 const POLL_INTERVAL = 800;  // ms
 
 // ===== Init =====
@@ -209,6 +210,25 @@ function handlePollResponse(data) {
              : (rawMode === 'debate' && !hasRoleMap) ? null
              : rawMode;
 
+  if (mode) hadSession = true;
+
+  // A finished/aborted session clears the stored status (debateStatus: null).
+  // Keep the last rendered panels on screen marked as "已完成" instead of
+  // resetting to the idle placeholder — only a freshly opened split view that
+  // never saw a real session shows the placeholder.
+  if (!mode && hadSession) {
+    const doneStatus = {
+      ...debateStatus,
+      mode: currentMode,
+      active: false,
+      finished: true,
+      topic: debateStatus?.topic || ''
+    };
+    updateToolbar(doneStatus);
+    markPanelsDone();
+    return;
+  }
+
   // Mode change → rebuild panels
   if (mode !== currentMode) {
     currentMode = mode;
@@ -252,6 +272,18 @@ function handlePollResponse(data) {
   } else if (mode === 'discussion') {
     handleDiscussionPoll(debateStatus, responses);
   }
+}
+
+// Mark every panel as finished after the session ends (its status was cleared).
+// Keeps the last rendered results visible instead of reverting to the placeholder.
+function markPanelsDone() {
+  Object.values(panelState).forEach(ps => {
+    ps.el?.classList.remove('sv-active');
+    if (ps.status) {
+      ps.status.textContent = '已完成';
+      ps.status.className = 'sv-panel-status sv-status-done';
+    }
+  });
 }
 
 // ===== Debate mode poll handler =====
@@ -445,10 +477,18 @@ function updateToolbar(status) {
   const topicDisplay = document.getElementById('sv-topic-display');
 
   if (!status || !status.active) {
-    phaseBadge.textContent = status?.mode === 'discussion' ? '讨论待机' : '辩论待机';
-    phaseBadge.style.background = '#374151';
-    roundDisplay.textContent = '';
-    topicDisplay.textContent = status?.topic || '';
+    if (status?.finished) {
+      // Session ended — keep the final results on screen with a "已完成" badge
+      phaseBadge.textContent = '已完成';
+      phaseBadge.style.background = '#10b981';
+      roundDisplay.textContent = status.mode === 'discussion' ? '讨论结束' : '辩论结束';
+      topicDisplay.textContent = status?.topic || '';
+    } else {
+      phaseBadge.textContent = status?.mode === 'discussion' ? '讨论待机' : '辩论待机';
+      phaseBadge.style.background = '#374151';
+      roundDisplay.textContent = '';
+      topicDisplay.textContent = status?.topic || '';
+    }
     return;
   }
 

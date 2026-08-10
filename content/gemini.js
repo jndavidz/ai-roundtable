@@ -46,7 +46,20 @@
       positivePattern: /(send|submit|run|发送|提交|运行)/i,
       enterFallback: true,
       maxWait: 7000,
-      afterClickDelay: 900
+      afterClickDelay: 900,
+      verifyMaxWait: 4000,
+      // Gemini replaces the send button with a stop button / spinner while
+      // generating. Detect that as the "submission started" signal, since the
+      // composer textarea isn't always cleared right away and previously caused
+      // false "Submit did not start" failures even though the message went out.
+      submittingSelectors: [
+        'button[aria-label*="Stop" i]',
+        'button[aria-label*="stop generating" i]',
+        'button[mattooltip*="Stop" i]',
+        'button[data-test-id*="stop" i]',
+        'button[data-testid*="stop" i]',
+        'mat-spinner'
+      ]
     },
 
     responseSelectors: [

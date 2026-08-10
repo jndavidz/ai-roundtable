@@ -90,8 +90,18 @@
 
     let isCapturing = false;
     let lastCapturedContent = '';
+    let lastCapturedAt = 0;
+    // Observer-triggered captures are a fallback path; suppress them for a
+    // short window after any successful capture so a single streaming response
+    // doesn't get reported twice (once by injectMessage's capture, once by the
+    // MutationObserver).
+    const OBSERVER_COOLDOWN_MS = 10000;
 
-    async function captureResponse({ preSendContent = '' } = {}) {
+    async function captureResponse({ preSendContent = '', source = 'inject' } = {}) {
+      if (source === 'observer' && Date.now() - lastCapturedAt < OBSERVER_COOLDOWN_MS) {
+        console.log('[AI Panel]', name, 'observer capture skipped (recently captured)');
+        return;
+      }
       if (isCapturing) {
         console.log('[AI Panel]', name, 'already capturing, skipping...');
         return;
@@ -100,11 +110,20 @@
 
       let previousContent = '';
       let stableCount = 0;
+      let stableLenTicks = 0;
       let newContentDetected = false;
-      let streamingEverDetected = false;
       let lastStreamingTime = 0;
       const startTime = Date.now();
       const preSendContainerCount = getMessageCount ? getMessageCount() : 0;
+      // How long the response text must be essentially settled (length within
+      // a small tolerance between polls) before we force-capture. Independent
+      // of the streaming indicator — some sites keep their "stop" button (our
+      // streaming signal) in the DOM after the answer is complete, and the
+      // captured block may flicker slightly (blinking cursor / live counters),
+      // both of which previously left the debate stuck on "speaking" for
+      // minutes until the page was manually touched.
+      const contentStableTimeout = config.contentStableTimeout ?? 3000;
+      const contentStableTolerance = config.contentStableTolerance ?? 5;
 
       try {
         while (Date.now() - startTime < maxWait) {
@@ -132,7 +151,6 @@
           const isStreaming = getStreamingSignal();
 
           if (isStreaming) {
-            streamingEverDetected = true;
             lastStreamingTime = Date.now();
           }
 
@@ -172,6 +190,7 @@
                 }
                 if (currentContent === lastCapturedContent) return; // already reported
                 lastCapturedContent = currentContent;
+                lastCapturedAt = Date.now();
                 safeSendMessage({
                   type: 'RESPONSE_CAPTURED',
                   aiType,
@@ -184,20 +203,30 @@
               stableCount = 0;
             }
 
-            // Stale streaming: the indicator may get stuck; if content has been
-            // stable for a while, force-capture anyway.
-            if (streamingEverDetected && Date.now() - lastStreamingTime > staleStreamingTimeout &&
-                currentContent === previousContent && currentContent.length > 0 &&
+            // Force-capture once the response text has essentially settled —
+            // length within a small tolerance between polls. This works even
+            // when the streaming indicator is stuck on AND tolerates tiny
+            // flicker (blinking cursor / live counters / re-renders) that
+            // keeps exact-equality checks from ever passing.
+            const lenDelta = Math.abs(currentContent.length - previousContent.length);
+            if (currentContent.length > 0 &&
                 currentContent !== preSendContent &&
-                currentContent !== lastCapturedContent) {
-              lastCapturedContent = currentContent;
-              safeSendMessage({
-                type: 'RESPONSE_CAPTURED',
-                aiType,
-                content: currentContent
-              });
-              console.log('[AI Panel]', name, 'stale streaming detected, force-captured, length:', currentContent.length);
-              return;
+                currentContent !== lastCapturedContent &&
+                lenDelta <= contentStableTolerance) {
+              stableLenTicks++;
+              if (stableLenTicks * checkInterval >= contentStableTimeout) {
+                lastCapturedContent = currentContent;
+                lastCapturedAt = Date.now();
+                safeSendMessage({
+                  type: 'RESPONSE_CAPTURED',
+                  aiType,
+                  content: currentContent
+                });
+                console.log('[AI Panel]', name, 'content settled, force-captured, length:', currentContent.length);
+                return;
+              }
+            } else {
+              stableLenTicks = 0;
             }
           }
 
@@ -226,7 +255,7 @@
       for (const selector of config.responseSelectors) {
         if (node.matches?.(selector) || node.querySelector?.(selector)) {
           console.log('[AI Panel]', config.name, 'detected new response...');
-          capture.captureResponse(); // observer path has no pre-send snapshot
+          capture.captureResponse({ source: 'observer' }); // observer path has no pre-send snapshot
           break;
         }
       }
@@ -289,6 +318,12 @@
 
       if (message.type === 'GET_LATEST_RESPONSE') {
         sendResponse({ content: config.getLatestResponse() });
+        return true;
+      }
+
+      // Liveness probe used by the side panel to verify this script is alive
+      if (message.type === 'PING') {
+        sendResponse({ pong: true });
         return true;
       }
     });
