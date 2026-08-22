@@ -1109,6 +1109,11 @@ header .subtitle {
   border-color: rgba(34, 197, 94, 0.3);
 }
 
+.discussion-status.error {
+  color: var(--danger);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
 /* Discussion Interject */
 .discussion-interject {
   display: flex;

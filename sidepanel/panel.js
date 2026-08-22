@@ -1,25 +1,8 @@
 // AI Panel - Side Panel Controller
-// NOTE: depends on personas.js being loaded FIRST (it defines PERSONAS,
-// DEFAULT_ROLE_AI_MAP, personaDebateState and AI_MODEL_OPTIONS used below).
-// Load order is enforced in panel.html: personas.js before panel.js.
-
-const AI_TYPES = ['claude', 'chatgpt', 'gemini', 'deepseek', 'glm', 'kimi', 'grok', 'qianwen', 'mimo', 'minimax', 'doubao', 'hunyuan'];
-
-// Display name mapping for all AI models
-const AI_DISPLAY_NAMES = {
-  claude: 'Claude',
-  chatgpt: 'ChatGPT',
-  grok: 'Grok',
-  gemini: 'Gemini',
-  deepseek: '深度求索',
-  glm: '智谱',
-  kimi: '月之暗面',
-  qianwen: '通义千问',
-  mimo: 'MiMo',
-  minimax: 'Minimax',
-  hunyuan: '混元',
-  doubao: '豆包'
-};
+// NOTE: depends on shared/constants.js and personas.js being loaded FIRST
+// (they define AI_TYPES / AI_DISPLAY_NAMES / getAITypeFromUrl and PERSONAS,
+// DEFAULT_ROLE_AI_MAP, personaDebateState, AI_MODEL_OPTIONS used below).
+// Load order is enforced in panel.html.
 
 function getAIName(aiType) {
   return AI_DISPLAY_NAMES[aiType] || capitalize(aiType);
@@ -59,6 +42,34 @@ let discussionState = {
   pendingResponses: new Set(),  // AIs we're waiting for
   roundType: null  // 'initial', 'cross-eval', 'counter'
 };
+
+// Round watchdog: unlike persona debate (sendAndWait has its own timeout) and
+// summary (SUMMARY_TIMEOUT below), the initial/cross-eval rounds used to wait
+// for RESPONSE_CAPTURED forever — a closed tab or a failed capture left the
+// round stuck on "等待 XX..." with no way forward except ending the session.
+// The bound matches sendAndWait's 620s so every mode fails at the same pace.
+const DISCUSSION_ROUND_TIMEOUT_MS = 620000;
+let roundWatchdogTimer = null;
+
+function armRoundWatchdog() {
+  disarmRoundWatchdog();
+  const waitedFor = [...discussionState.pendingResponses].map(getAIName).join('、');
+  roundWatchdogTimer = setTimeout(() => {
+    roundWatchdogTimer = null;
+    if (!discussionState.active || discussionState.pendingResponses.size === 0) return;
+    log(`本轮等待 ${waitedFor} 超时（10 分钟），已停止等待。可结束讨论后重试，或用"插话"继续推进。`, 'error');
+    discussionState.pendingResponses.clear();
+    updateDiscussionStatus('error', `本轮超时：未收到 ${waitedFor} 的回复`);
+    publishDiscussionStatus();
+  }, DISCUSSION_ROUND_TIMEOUT_MS);
+}
+
+function disarmRoundWatchdog() {
+  if (roundWatchdogTimer) {
+    clearTimeout(roundWatchdogTimer);
+    roundWatchdogTimer = null;
+  }
+}
 
 
 // Initialize
@@ -242,43 +253,7 @@ async function checkConnectedTabs() {
   }
 }
 
-// Hostname-suffix match: exact host or a subdomain of the pattern, with the
-// leading "www." stripped. Using the hostname (not the raw URL string) avoids
-// false positives like https://evil.com/?r=kimi.com
-function hostnameMatches(hostname, pattern) {
-  if (hostname === pattern) return true;
-  return hostname.endsWith('.' + pattern);
-}
-
-function getAITypeFromUrl(url) {
-  if (!url) return null;
-  let hostname;
-  try {
-    hostname = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
-  } catch (err) {
-    return null;
-  }
-
-  const patterns = {
-    claude: ['claude.ai'],
-    chatgpt: ['chat.openai.com', 'chatgpt.com'],
-    gemini: ['gemini.google.com'],
-    deepseek: ['chat.deepseek.com'],
-    glm: ['chatglm.cn', 'z.ai'],
-    kimi: ['kimi.com'],
-    grok: ['grok.com'],
-    qianwen: ['qianwen.com', 'tongyi.aliyun.com'],
-    mimo: ['xiaomimimo.com'],
-    minimax: ['minimaxi.com', 'minimax.io'],
-    doubao: ['doubao.com'],
-    hunyuan: ['yuanbao.tencent.com']
-  };
-
-  for (const [aiType, hosts] of Object.entries(patterns)) {
-    if (hosts.some(h => hostnameMatches(hostname, h))) return aiType;
-  }
-  return null;
-}
+// Hostname matching + URL→aiType resolution come from shared/constants.js.
 
 function updateTabStatus(aiType, connected) {
   roleStatusState[aiType] = connected;
@@ -735,6 +710,7 @@ async function startDiscussion() {
     `${getAIName(selected[0])} vs ${getAIName(selected[1])}`;
   document.getElementById('topic-display').textContent = topic;
   updateDiscussionStatus('waiting', `等待 ${selected.map(getAIName).join(' 和 ')} 的初始回复...`);
+  armRoundWatchdog();
 
   // Disable buttons during round
   document.getElementById('next-round-btn').disabled = true;
@@ -757,9 +733,12 @@ async function startDiscussion() {
   chrome.runtime.sendMessage({ type: 'OPEN_SPLITVIEW' });
   log('[分屏视图] 已自动打开');
 
-  // Send topic to both AIs in parallel (different tabs)
+  // Send topic to both AIs in parallel (different tabs).
+  // Chinese prompt: participants are mostly Chinese models, and an English
+  // opening made them reply in English while the rest of the roundtable
+  // (interject/summary) speaks Chinese.
   await Promise.all(selected.map(ai =>
-    sendToAI(ai, `Please share your thoughts on the following topic:\n\n${topic}`)
+    sendToAI(ai, `请就以下议题分享你的观点：\n\n${topic}`)
   ));
 }
 
@@ -784,6 +763,7 @@ function handleDiscussionResponse(aiType, content) {
 
   // Check if all pending responses received
   if (discussionState.pendingResponses.size === 0) {
+    disarmRoundWatchdog();
     onRoundComplete();
   } else {
     const remaining = Array.from(discussionState.pendingResponses).map(getAIName).join(', ');
@@ -829,28 +809,29 @@ async function nextRound() {
   discussionState.roundType = 'cross-eval';
 
   updateDiscussionStatus('waiting', `交叉评价: ${getAIName(ai1)} 评价 ${getAIName(ai2)}，${getAIName(ai2)} 评价 ${getAIName(ai1)}...`);
+  armRoundWatchdog();
 
   log(`第 ${discussionState.currentRound} 轮: 交叉评价开始`);
   publishDiscussionStatus();
 
   // Send cross-evaluation requests
   // AI1 evaluates AI2's response
-  const msg1 = `Here is ${getAIName(ai2)}'s response to the topic "${discussionState.topic}":
+  const msg1 = `以下是 ${getAIName(ai2)} 就主题「${discussionState.topic}」的回复：
 
 <${ai2}_response>
 ${ai2Response}
 </${ai2}_response>
 
-Please evaluate this response. What do you agree with? What do you disagree with? What would you add or change?`;
+请评价这条回复。你同意什么？不同意什么？有什么需要补充或修改的地方？`;
 
   // AI2 evaluates AI1's response
-  const msg2 = `Here is ${getAIName(ai1)}'s response to the topic "${discussionState.topic}":
+  const msg2 = `以下是 ${getAIName(ai1)} 就主题「${discussionState.topic}」的回复：
 
 <${ai1}_response>
 ${ai1Response}
 </${ai1}_response>
 
-Please evaluate this response. What do you agree with? What do you disagree with? What would you add or change?`;
+请评价这条回复。你同意什么？不同意什么？有什么需要补充或修改的地方？`;
 
   await Promise.all([
     sendToAI(ai1, msg1),
@@ -1052,6 +1033,7 @@ function resetDiscussion() {
     clearInterval(summaryPollTimer);
     summaryPollTimer = null;
   }
+  disarmRoundWatchdog();
 
   discussionState = {
     active: false,
@@ -1089,6 +1071,16 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// escapeHtml (textContent roundtrip) escapes & < > but NOT double quotes, so
+// it is not safe inside a double-quoted attribute like title="...".
+function escapeAttr(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 // ============================================
@@ -1139,7 +1131,7 @@ function renderFileList() {
       const item = document.createElement('div');
       item.className = 'file-item';
       item.innerHTML = `
-        <span class="file-name" title="${file.name}">${file.name}</span>
+        <span class="file-name" title="${escapeAttr(file.name)}">${escapeHtml(file.name)}</span>
         <button class="remove-file" title="移除">&times;</button>
       `;
       item.querySelector('.remove-file').addEventListener('click', () => removeFile(index));

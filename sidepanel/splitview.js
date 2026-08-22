@@ -3,45 +3,26 @@
 //   - 'debate': 4-role persona debate (2x2 grid)
 //   - 'discussion': 2-AI discussion (1x2 grid)
 // Polls background for real-time status + streaming responses, renders panels.
+//
+// NOTE: depends on shared/constants.js (AI_DISPLAY_NAMES) and
+// sidepanel/personas.js (PERSONAS / DEFAULT_ROLE_AI_MAP) loaded FIRST —
+// enforced in splitview.html.
 
-// ===== Role metadata (mirrors personas.js) =====
-const ROLE_INFO = {
-  ling: { name: '凌', title: '理性派', subtitle: '逻辑拆解 · 论证链评估' },
-  wen:  { name: '温', title: '感性派', subtitle: '人文视角 · 情绪轮廓' },
-  mo:   { name: '默', title: '审问派', subtitle: '反例 · 边界条件' },
-  he:   { name: '合', title: '全局分析', subtitle: '终局结构化总结' }
-};
+const AI_NAMES = AI_DISPLAY_NAMES; // shared single source (shared/constants.js)
 
-const AI_NAMES = {
-  claude: 'Claude',
-  chatgpt: 'ChatGPT',
-  grok: 'Grok',
-  gemini: 'Gemini',
-  deepseek: '深度求索',
-  glm: '智谱',
-  kimi: '月之暗面',
-  qianwen: '通义千问',
-  mimo: 'MiMo',
-  minimax: 'Minimax',
-  hunyuan: '混元',
-  doubao: '豆包'
-};
+// Role metadata comes straight from personas.js so a persona edit in one place
+// is reflected everywhere; only the split-view-specific subtitle is derived.
+function getRoleInfo(role, customPersonas) {
+  const base = PERSONAS[role];
+  const custom = customPersonas?.[role];
+  return {
+    name: custom?.name || base.name,
+    title: custom?.title || base.title,
+    subtitle: custom?.stance || base.stance
+  };
+}
 
 const PANEL_ORDER = ['ling', 'wen', 'mo', 'he'];
-
-// Get effective role info (custom override if exists)
-function getRoleInfo(role, customPersonas) {
-  const base = ROLE_INFO[role];
-  const custom = customPersonas?.[role];
-  if (custom) {
-    return {
-      name: custom.name || base.name,
-      title: custom.title || base.title,
-      subtitle: custom.stance ? custom.stance : base.subtitle
-    };
-  }
-  return base;
-}
 
 // ===== State =====
 let currentMode = null;       // 'debate' | 'discussion' | null
@@ -70,8 +51,7 @@ function buildEmptyPanels() {
 
 // ===== Build / rebuild panels for DEBATE mode (4 panels, 2x2) =====
 function buildDebatePanels(roleAIMap) {
-  const defaultMap = { ling: 'deepseek', wen: 'glm', mo: 'chatgpt', he: 'claude' };
-  const map = roleAIMap || defaultMap;
+  const map = roleAIMap || DEFAULT_ROLE_AI_MAP;
   const grid = document.getElementById('sv-grid');
   grid.innerHTML = '';
   grid.className = 'sv-grid sv-grid-4';

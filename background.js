@@ -1,35 +1,15 @@
 // AI Panel - Background Service Worker
 
-// URL patterns for each AI
-const AI_URL_PATTERNS = {
-  claude: ['claude.ai'],
-  chatgpt: ['chat.openai.com', 'chatgpt.com'],
-  gemini: ['gemini.google.com'],
-  deepseek: ['chat.deepseek.com'],
-  glm: ['chatglm.cn', 'z.ai'],
-  kimi: ['kimi.com'],
-  grok: ['grok.com'],
-  qianwen: ['qianwen.com', 'tongyi.aliyun.com'],
-  mimo: ['xiaomimimo.com'],
-  minimax: ['minimaxi.com', 'minimax.io'],
-  doubao: ['doubao.com'],
-  hunyuan: ['yuanbao.tencent.com']
-};
+// Shared AI tables (URL patterns / display names / hostname helpers) live in
+// shared/constants.js — the single source of truth also used by the side panel
+// and split view. Must be imported before anything reads AI_URL_PATTERNS.
+importScripts('shared/constants.js');
 
-const AI_SITE_SCRIPTS = {
-  claude: 'content/claude.js',
-  chatgpt: 'content/chatgpt.js',
-  gemini: 'content/gemini.js',
-  deepseek: 'content/deepseek.js',
-  glm: 'content/glm.js',
-  kimi: 'content/kimi.js',
-  grok: 'content/grok.js',
-  qianwen: 'content/qianwen.js',
-  mimo: 'content/mimo.js',
-  minimax: 'content/minimax.js',
-  doubao: 'content/doubao.js',
-  hunyuan: 'content/hunyuan.js'
-};
+// Content-script file per AI. The filename convention is content/<aiType>.js.
+const AI_SITE_SCRIPTS = {};
+for (const aiType of AI_TYPES) {
+  AI_SITE_SCRIPTS[aiType] = `content/${aiType}.js`;
+}
 
 // Every site script depends on the shared helper stack (content/dom-utils.js +
 // content/base.js), which must be injected first, in order. The list is derived
@@ -232,6 +212,12 @@ async function sendMessageToAI(aiType, message) {
       message
     });
 
+    // Pin affinity only on a successful send; failures leave the previous
+    // choice (or none) so the next turn re-scores tabs normally.
+    if (response?.success && tab.id !== undefined) {
+      lastUsedTabIdByAI[aiType] = tab.id;
+    }
+
     // Notify side panel
     notifySidePanel('SEND_RESULT', {
       aiType,
@@ -325,6 +311,14 @@ async function sendFilesToAI(aiType, files) {
   }
 }
 
+// Remember which tab last accepted a message per AI. Debates run many turns
+// over minutes, and findAITab's scoring includes an active-tab bonus — without
+// affinity, the user merely switching window focus could silently redirect the
+// rest of a debate to a different chat tab of the same model (fresh session,
+// no context). The remembered tab gets a bonus above any natural score.
+const lastUsedTabIdByAI = {};
+const LAST_USED_TAB_BONUS = 200;
+
 async function findAITab(aiType) {
   const patterns = AI_URL_PATTERNS[aiType];
   if (!patterns) return null;
@@ -333,8 +327,9 @@ async function findAITab(aiType) {
   const scoredTabs = [];
 
   for (const tab of tabs) {
-    const score = scoreAITab(aiType, tab);
+    let score = scoreAITab(aiType, tab);
     if (score > -Infinity) {
+      if (tab.id === lastUsedTabIdByAI[aiType]) score += LAST_USED_TAB_BONUS;
       scoredTabs.push({ tab, score });
     }
   }
@@ -343,13 +338,7 @@ async function findAITab(aiType) {
   return scoredTabs[0]?.tab || null;
 }
 
-// Hostname-suffix match: exact host or a subdomain of the pattern, with the
-// leading "www." stripped. Using the hostname (not the raw URL string) avoids
-// false positives like https://evil.com/?r=kimi.com or notkimi.com
-function hostnameMatches(hostname, pattern) {
-  if (hostname === pattern) return true;
-  return hostname.endsWith('.' + pattern);
-}
+// Hostname matching + URL→aiType resolution come from shared/constants.js.
 
 function scoreAITab(aiType, tab) {
   if (!tab.url) return -Infinity;
@@ -449,22 +438,6 @@ function scoreAITab(aiType, tab) {
   }
 
   return score;
-}
-
-function getAITypeFromUrl(url) {
-  if (!url) return null;
-  let hostname;
-  try {
-    hostname = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
-  } catch (err) {
-    return null;
-  }
-  for (const [aiType, patterns] of Object.entries(AI_URL_PATTERNS)) {
-    if (patterns.some(p => hostnameMatches(hostname, p))) {
-      return aiType;
-    }
-  }
-  return null;
 }
 
 async function notifySidePanel(type, data) {

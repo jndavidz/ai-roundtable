@@ -87,6 +87,15 @@
       (config.streamingSelectors
         ? () => config.streamingSelectors.some(s => document.querySelector(s))
         : () => false);
+    // Sites WITHOUT any streaming signal can't distinguish "model is thinking
+    // mid-answer" from "answer finished", so the plain stability path (2s of
+    // unchanged text) risks capturing a truncated reply at a thinking pause.
+    // For those, require a longer quiet window before the stable-path capture;
+    // the content-settled force-capture below still bounds the extra latency.
+    const hasStreamingSignal = Boolean(config.getStreamingSignal || config.streamingSelectors);
+    const effStableThreshold = hasStreamingSignal
+      ? stableThreshold
+      : Math.max(stableThreshold, 8); // ~4s of unchanged content
 
     let isCapturing = false;
     let lastCapturedContent = '';
@@ -180,7 +189,7 @@
             const streamingStopped = !isStreaming && (Date.now() - lastStreamingTime > 2000);
             if (streamingStopped && currentContent === previousContent && currentContent.length > 0) {
               stableCount++;
-              if (stableCount >= stableThreshold) {
+              if (stableCount >= effStableThreshold) {
                 // Final guard: don't capture content identical to the pre-send state
                 if (currentContent === preSendContent) {
                   console.log('[AI Panel]', name, 'content same as pre-send, continuing to wait...');
@@ -335,13 +344,16 @@
       const inputEl = window.AIPanelDom?.findInputField(config.inputSelectors, { preferBottom: true });
       if (!inputEl) throw new Error(`Could not find ${name} input field`);
 
+      // Snapshot content BEFORE submitting. Taken after the send, an instant
+      // one-shot reply would already be part of the "pre-send" state and every
+      // diff-based new-content signal would miss it until the 10min timeout.
+      const preSendContent = config.getLatestResponse() || '';
+
       await window.AIPanelDom.setEditorText(inputEl, text, { afterInputDelay: config.afterInputDelay ?? 500 });
 
       const submitResult = await window.AIPanelDom.submitMessage(inputEl, config.submitOptions);
       console.log('[AI Panel]', name, 'message sent via', submitResult.method, 'starting response capture...');
 
-      // Record content BEFORE the new response appears, so we only capture NEW content
-      const preSendContent = config.getLatestResponse() || '';
       capture.captureResponse({ preSendContent });
       return true;
     }

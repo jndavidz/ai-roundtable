@@ -268,6 +268,19 @@ Contributions welcome (low-maintenance project):
 
 ---
 
+## Development / 开发
+
+零依赖项目：无构建步骤、无 npm 依赖，直接以未打包扩展加载即可（`chrome://extensions` → 开发者模式 → 加载已解压的扩展程序）。
+
+```bash
+npm test   # 运行全部测试（Node 内置 vm 沙箱，无需安装任何依赖）
+```
+
+- `shared/constants.js` — 支持的 AI 清单一览表（URL 模式 / 显示名 / hostname 工具函数），background（`importScripts`）、侧栏与分屏页（`<script>`）共用；新增 AI 时改这一处 + manifest + 一个 content 适配器
+- `test/` — 纯逻辑单测（响应捕获状态机 / 命令解析 / tab 打分与亲和 / 常量与 manifest 一致性），CI 见 `.github/workflows/test.yml`
+
+---
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
