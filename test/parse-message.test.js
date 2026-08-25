@@ -81,6 +81,32 @@ function assert(cond, msg) {
   p = parseMessage('/cross hello world');
   assert(p.crossRef === false, '/cross without arrow should degrade to plain');
 
+  // ---- /summary: bare form (summarizer = first checked model at runtime) ----
+  p = parseMessage('/summary');
+  assert(p.summary === true, '/summary should set summary');
+  assert(p.summarizerAI === null, `/summary bare should have no summarizer, got ${p.summarizerAI}`);
+  assert(p.prompt === '', `/summary bare prompt should be empty, got '${p.prompt}'`);
+  assert(p.mentions.length === 0, '/summary must not route through the mention path');
+
+  // ---- /summary with explicit summarizer ----
+  p = parseMessage('/summary @Claude');
+  assert(p.summary === true && p.summarizerAI === 'claude', `summarizer wrong: ${p.summarizerAI}`);
+  assert(p.prompt === '', `prompt should be empty, got '${p.prompt}'`);
+
+  // ---- /summary with summarizer + extra instructions ----
+  p = parseMessage('/summary @deepseek 重点对比安全性差异');
+  assert(p.summary === true && p.summarizerAI === 'deepseek', `summarizer wrong: ${p.summarizerAI}`);
+  assert(p.prompt === '重点对比安全性差异', `custom prompt broken: '${p.prompt}'`);
+
+  // instructions may also come before the @mention
+  p = parseMessage('/summary 聚焦成本 @glm');
+  assert(p.summary === true && p.summarizerAI === 'glm', `summarizer wrong: ${p.summarizerAI}`);
+  assert(p.prompt === '聚焦成本', `prompt before mention broken: '${p.prompt}'`);
+
+  // ---- /summaryxxx must NOT match /summary ----
+  p = parseMessage('/summaries please');
+  assert(!p.summary, "'/summaries' should not trigger the summary branch");
+
   // ---- two mentions + evaluation keyword => implicit cross-ref ----
   // First mention = target (evaluates), last mention = source (is evaluated).
   p = parseMessage('@claude 你觉得 @chatgpt 讲的怎么样');

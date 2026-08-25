@@ -115,6 +115,7 @@
         <div class="toolbar-group commands">
           <button class="shortcut-btn" id="mutual-btn" data-insert="/mutual " title="互评：让所有 AI 互相评价">/mutual</button>
           <button class="shortcut-btn" id="cross-btn" data-insert="/cross " title="交叉：两个围攻一个">/cross</button>
+          <button class="shortcut-btn" id="summary-btn" data-insert="/summary " title="汇总：把所有选中模型的最新回复交给一个模型做结构化总结">/summary</button>
           <button class="shortcut-btn" id="arrow-btn" data-insert=" <- " title="来源箭头：指定被评价的 AI">←</button>
           <select id="action-select" class="action-select" title="插入动作词">
             <option value="">动作</option>
@@ -155,12 +156,18 @@
           <li><code>@Claude 评价一下 @ChatGPT</code></li>
           <li><code>/cross @Claude @Gemini <- @ChatGPT</code></li>
         </ul>
+        <p class="help-subtitle">汇总 /summary</p>
+        <ul>
+          <li><code>/summary</code><br><small>把所有选中模型的最新回复交给第一个模型做结构化汇总</small></li>
+          <li><code>/summary @Claude</code><br><small>指定 Claude 作为汇总人（素材仍是全部选中模型的回复）</small></li>
+          <li><code>/summary @Claude 重点看安全性</code><br><small>可附加自定义汇总要求</small></li>
+        </ul>
       </div>
 
       <div class="composer-wrap">
         <textarea
           id="message-input"
-          placeholder="输入消息...&#10;&#10;互评: /mutual（基于当前回复）&#10;单向: @Claude 评价一下 @ChatGPT"
+          placeholder="输入消息...&#10;&#10;互评: /mutual（基于当前回复）&#10;汇总: /summary（综合所有回复）&#10;单向: @Claude 评价一下 @ChatGPT"
           rows="6"
         ></textarea>
         <input type="file" id="file-input" multiple hidden accept="image/*,.pdf,.txt,.md,.json,.csv,.xml,.html,.css,.js,.ts,.py">

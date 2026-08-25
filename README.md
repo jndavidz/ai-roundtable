@@ -85,6 +85,7 @@ I'm currently most satisfied with, and calibrated to, the **web chat experience*
 - **文件上传** - 同时向多个 AI 发送图片或文档附件
 - **互评模式** - 让所有 AI 互相评价，对等参与（/mutual 命令）
 - **交叉引用** - 让 Claude 评价 ChatGPT 的回答，或反过来
+- **一键汇总** - 把所有模型的最新回复交给一个模型做结构化总结（/summary 命令）
 - **讨论模式** - 两个 AI 就同一主题进行多轮深度讨论
 - **无需 API** - 直接操作网页界面，使用你现有的 AI 订阅
 
@@ -98,7 +99,8 @@ I'm currently most satisfied with, and calibrated to, the **web chat experience*
 2. **/mutual**：互相挑刺，逼出前提
 3. **@ 审计**：由你决定谁审谁
 4. **/cross**：两方围攻一方，压力测试
-5. **讨论模式**：只在需要时进行多轮辩论
+5. **/summary**：指定一个模型汇总全部观点
+6. **讨论模式**：只在需要时进行多轮辩论
 
 **EN**
 
@@ -106,7 +108,8 @@ I'm currently most satisfied with, and calibrated to, the **web chat experience*
 2. **/mutual** — Let models critique each other (expose assumptions)
 3. **@ audit** — You decide who audits whom
 4. **/cross** — Two models pressure-test one conclusion
-5. **Discussion** — Run multi-round debates only when needed
+5. **/summary** — Have one model synthesize every perspective
+6. **Discussion** — Run multi-round debates only when needed
 
 ---
 
@@ -183,6 +186,22 @@ I'm currently most satisfied with, and calibrated to, the **web chat experience*
 ```
 
 **动作下拉菜单**：快速插入预设动作词（评价/借鉴/批评/补充/对比）
+
+**汇总**
+
+把所有选中模型的最新回复交给一个模型，生成结构化综合结论：
+```
+/summary
+/summary @Claude
+/summary @Claude 重点对比安全性差异
+```
+
+用法：
+1. 先发送一个问题给多个 AI，等待它们各自回复
+2. 输入 `/summary`（或点击 `/summary` 按钮）
+   - 不指定 @ 时，由勾选列表中的第一个模型执笔
+   - `@模型` 只指定汇总人；素材始终是**全部勾选模型**的最新回复
+3. 汇总结果出现在汇总人的聊天标签页中
 
 ### 讨论模式
 

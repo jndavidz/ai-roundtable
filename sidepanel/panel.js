@@ -326,6 +326,10 @@ async function handleSend() {
         messageSent = await handleMutualReview(targets, parsed.prompt);
       }
     }
+    // If summary, handle specially (material = checked models' latest replies)
+    else if (parsed.summary) {
+      messageSent = await handleSummary(parsed);
+    }
     // If cross-reference, handle specially
     else if (parsed.crossRef) {
       log(`Cross-reference: ${parsed.targetAIs.join(', ')} <- ${parsed.sourceAIs.join(', ')}`);
@@ -409,6 +413,29 @@ function parseMessage(message) {
         originalMessage: actualMessage
       };
     }
+  }
+
+  // Check for /summary command: /summary [@summarizer] [extra instructions]
+  // Material always comes from the CHECKED models' latest responses; the
+  // (optional) first @mention only picks which model writes the summary.
+  if (trimmedMessage.toLowerCase() === '/summary' || trimmedMessage.toLowerCase().startsWith('/summary ')) {
+    const rest = trimmedMessage.length > 8 ? trimmedMessage.substring(8).trim() : '';
+    const summaryMentionPattern = /@(claude|chatgpt|grok|gemini|deepseek|glm|kimi|qianwen|mimo|minimax|hunyuan|doubao)/gi;
+    const summaryMentions = [...rest.matchAll(summaryMentionPattern)];
+    let summarizerAI = null;
+    let prompt = rest;
+    if (summaryMentions.length > 0) {
+      summarizerAI = summaryMentions[0][1].toLowerCase();
+      prompt = rest.replace(summaryMentionPattern, '').trim();
+    }
+    return {
+      summary: true,
+      crossRef: false,
+      summarizerAI,
+      prompt,
+      mentions: [],
+      originalMessage: message
+    };
   }
 
   // Pattern-based detection for @ mentions
@@ -529,6 +556,66 @@ ${responses[sourceAI]}
     log(`[Mutual] 部分 AI 未收到交叉评价，请查看日志`, 'error');
   }
   return allSucceeded;
+}
+
+// ============================================
+// Summary Function (/summary)
+// ============================================
+
+/**
+ * Collect the latest responses of all CHECKED models and ask one model
+ * (explicit @mention, or the first checked one) to write a structured
+ * summary. The result lands in the summarizer's own chat tab — consistent
+ * with normal mode's philosophy that content stays in the AI tabs.
+ */
+async function handleSummary(parsed) {
+  // Material: checked models; fall back to the @mentioned model alone
+  const checkedTargets = AI_TYPES.filter(ai => {
+    const checkbox = document.getElementById(`target-${ai}`);
+    return checkbox && checkbox.checked;
+  });
+  let sourceList = checkedTargets;
+  if (sourceList.length === 0 && parsed.summarizerAI) sourceList = [parsed.summarizerAI];
+  if (sourceList.length === 0) {
+    log('[汇总] 请先勾选参与汇总的模型，或用 /summary @模型 指定', 'error');
+    return false;
+  }
+
+  // Summarizer: explicit @mention wins, otherwise the first checked model
+  const summarizer = parsed.summarizerAI || sourceList[0];
+
+  log(`[汇总] 正在获取 ${sourceList.map(getAIName).join('、')} 的最新回复...`);
+  const entries = await Promise.all(sourceList.map(async (ai) => ({
+    ai,
+    response: await getLatestResponse(ai)
+  })));
+  const valid = entries.filter(e => e.response && e.response.trim().length > 0);
+
+  if (valid.length < 2) {
+    log(`[汇总] 至少需要 2 个模型的回复才能汇总（当前有效 ${valid.length} 份）——请确认相关模型已回答过问题`, 'error');
+    return false;
+  }
+
+  let summaryMessage = '以下是多个 AI 助手就相同问题的回答，请你作为中立汇总人，综合所有观点生成一份汇总：\n';
+  for (const entry of valid) {
+    summaryMessage += `\n<${entry.ai}_response>\n${entry.response}\n</${entry.ai}_response>\n`;
+  }
+  if (parsed.prompt) {
+    summaryMessage += `\n用户要求：${parsed.prompt}\n`;
+  }
+  summaryMessage += `
+请输出结构化汇总（使用中文）：
+1. 各方核心观点（每位参与者一句话概括）
+2. 共识点
+3. 主要分歧点
+4. 综合结论与建议`;
+
+  log(`[汇总] 已收集 ${valid.map(e => getAIName(e.ai)).join('、')} 共 ${valid.length} 份回复，正在请 ${getAIName(summarizer)} 汇总...`);
+  const result = await sendToAI(summarizer, summaryMessage);
+  if (result?.success) {
+    log(`[汇总] 汇总请求已发送给 ${getAIName(summarizer)}，完成后请在对应标签页查看结果`, 'success');
+  }
+  return result?.success === true;
 }
 
 async function getLatestResponse(aiType) {
