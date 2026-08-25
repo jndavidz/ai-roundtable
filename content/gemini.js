@@ -157,19 +157,32 @@
     const buttons = findUploadButtons();
     console.log('[AI Panel] Gemini upload buttons:', buttons.length, 'file inputs before:', beforeCount);
 
-    for (const btn of buttons.slice(0, 4)) {
-      clickElement(btn);
-      await window.AIPanelBase.sleep(350);
-
-      const menuItems = findUploadMenuItems();
-      for (const item of menuItems.slice(0, 3)) {
-        clickElement(item);
+    try {
+      for (const btn of buttons.slice(0, 4)) {
+        clickElement(btn);
         await window.AIPanelBase.sleep(350);
+
+        const menuItems = findUploadMenuItems();
+        for (const item of menuItems.slice(0, 3)) {
+          clickElement(item);
+          await window.AIPanelBase.sleep(350);
+          if (document.querySelectorAll('input[type="file"]').length > beforeCount) return;
+        }
+
         if (document.querySelectorAll('input[type="file"]').length > beforeCount) return;
       }
-
-      if (document.querySelectorAll('input[type="file"]').length > beforeCount) return;
+    } finally {
+      closeStrayMenus();
     }
+  }
+
+  // Probing clicks can leave upload menus/dialogs open on failure; send an
+  // Escape to the page so the UI returns to its resting state.
+  function closeStrayMenus() {
+    const target = document.activeElement || document.body;
+    target.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true
+    }));
   }
 
   function findUploadButtons() {
@@ -336,6 +349,8 @@
 
   function getUploadSnapshot(files) {
     const text = document.body.innerText || '';
+    // Count occurrences so a filename that merely stays visible (mentioned in
+    // the conversation, etc.) doesn't read as newly-accepted evidence.
     const hasFileName = files.some(file => text.includes(file.name));
     const attachmentSelectors = [
       '[aria-label*="Remove" i]',

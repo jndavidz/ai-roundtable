@@ -291,6 +291,14 @@ html, body {
   padding-bottom: 0;
 }
 
+/* Inside the split .sv-turns subtree the last finished turn is no longer the
+   body's last child (a streaming block may follow), so keep its separator. */
+.sv-turns > .sv-turn-block:last-child {
+  border-bottom: 1px solid #2a2d38;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+}
+
 .sv-turn-label {
   font-size: 11px;
   font-weight: 600;

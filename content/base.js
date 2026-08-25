@@ -301,14 +301,45 @@
   }
 
   // ===== Controller factory =====
+
+  // Default response extractor: walk the selector list in order and return
+  // the last matching block. Nine of the twelve site adapters use exactly
+  // this shape, so adapters only need a custom getLatestResponse when they do
+  // something extra (thinking-block filtering, multi-part joins, ...).
+  function makeDefaultGetLatestResponse(responseSelectors) {
+    return function () {
+      for (const selector of responseSelectors) {
+        const blocks = document.querySelectorAll(selector);
+        if (blocks.length > 0) {
+          return blocks[blocks.length - 1].innerText.trim();
+        }
+      }
+      return null;
+    };
+  }
+
   function createController(config) {
     const { aiType, name } = config;
+
+    // Fill in standard behavior so site configs stay minimal:
+    //   getLatestResponse   ← derive from responseSelectors when omitted
+    //   streamingSelectors  ← reuse submittingSelectors when omitted (on most
+    //                         sites the "stop" UI doubles as both signals)
+    const effectiveConfig = {
+      ...config,
+      getLatestResponse: config.getLatestResponse ||
+        ((config.responseSelectors && config.responseSelectors.length > 0)
+          ? makeDefaultGetLatestResponse(config.responseSelectors)
+          : null),
+      streamingSelectors: config.streamingSelectors ||
+        config.submitOptions?.submittingSelectors
+    };
 
     // Notify background that content script is ready
     safeSendMessage({ type: 'CONTENT_SCRIPT_READY', aiType });
 
-    const capture = createCapture(config);
-    createResponseObserver(config, capture);
+    const capture = createCapture(effectiveConfig);
+    createResponseObserver(effectiveConfig, capture);
 
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message.type === 'INJECT_MESSAGE') {
@@ -326,7 +357,7 @@
       }
 
       if (message.type === 'GET_LATEST_RESPONSE') {
-        sendResponse({ content: config.getLatestResponse() });
+        sendResponse({ content: effectiveConfig.getLatestResponse ? effectiveConfig.getLatestResponse() : null });
         return true;
       }
 
@@ -347,7 +378,7 @@
       // Snapshot content BEFORE submitting. Taken after the send, an instant
       // one-shot reply would already be part of the "pre-send" state and every
       // diff-based new-content signal would miss it until the 10min timeout.
-      const preSendContent = config.getLatestResponse() || '';
+      const preSendContent = effectiveConfig.getLatestResponse ? (effectiveConfig.getLatestResponse() || '') : '';
 
       await window.AIPanelDom.setEditorText(inputEl, text, { afterInputDelay: config.afterInputDelay ?? 500 });
 

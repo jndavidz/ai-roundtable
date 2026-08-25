@@ -31,8 +31,11 @@ let lastRebuildKey = '';      // Track when to rebuild panels
 let prevCurrentSpeaker = null;
 let currentCustomPersonas = {};
 let pollTimer = null;
+let currentPollInterval = 0;  // Interval currently installed (dedupe restarts)
 let hadSession = false;       // Have we ever rendered a real session? (retains results after it ends)
-const POLL_INTERVAL = 800;  // ms
+const POLL_INTERVAL_ACTIVE = 800;  // ms while a debate/discussion is running
+const POLL_INTERVAL_IDLE = 4000;   // ms after it ends — keep listening for a
+                                   // new session without hot-polling forever
 
 // ===== Init =====
 document.addEventListener('DOMContentLoaded', () => {
@@ -40,6 +43,21 @@ document.addEventListener('DOMContentLoaded', () => {
   startPolling();
   document.getElementById('sv-refresh-btn').addEventListener('click', pollOnce);
 });
+
+// Swap the polling frequency without stacking intervals. Sessions end but the
+// dashboard tab often stays open for hours — an idle tab should not keep
+// hitting every AI tab every 800ms.
+function setPollInterval(ms) {
+  if (ms === currentPollInterval) return;
+  currentPollInterval = ms;
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(pollOnce, ms);
+}
+
+function startPolling() {
+  pollOnce();
+  setPollInterval(POLL_INTERVAL_ACTIVE);
+}
 
 // ===== Build placeholder panels before first poll =====
 function buildEmptyPanels() {
@@ -136,6 +154,9 @@ function initPanelState(panel, key, aiType) {
     status: panel.querySelector('.sv-panel-status'),
     aiType: aiType,
     turns: [],
+    turnsDirty: false,   // completed-turn list changed → re-render .sv-turns once
+    turnsEl: null,       // cached subtree for finished turns
+    streamingEl: null,   // cached subtree for the in-flight reply
     streaming: '',
     lastSnapshotContent: '',
     hasContent: false,
@@ -162,10 +183,7 @@ function initPanelState(panel, key, aiType) {
 }
 
 // ===== Polling =====
-function startPolling() {
-  pollOnce();
-  pollTimer = setInterval(pollOnce, POLL_INTERVAL);
-}
+// (startPolling / setPollInterval live near the state block above)
 
 async function pollOnce() {
   try {
@@ -206,8 +224,12 @@ function handlePollResponse(data) {
     };
     updateToolbar(doneStatus);
     markPanelsDone();
+    setPollInterval(POLL_INTERVAL_IDLE);
     return;
   }
+
+  // Active session → fast polling; published-but-idle status → slow polling.
+  setPollInterval(mode && debateStatus?.active ? POLL_INTERVAL_ACTIVE : POLL_INTERVAL_IDLE);
 
   // Mode change → rebuild panels
   if (mode !== currentMode) {
@@ -337,6 +359,7 @@ function snapshotTurn(role, round, phase) {
     }
     ps.turns.push({ label, content });
     ps.lastSnapshotContent = content;
+    ps.turnsDirty = true;
   }
   ps.streaming = '';
 }
@@ -357,6 +380,7 @@ function snapshotDiscussionTurn(ai, round, roundType) {
     }
     ps.turns.push({ label, content });
     ps.lastSnapshotContent = content;
+    ps.turnsDirty = true;
   }
   ps.streaming = '';
 }
@@ -402,33 +426,53 @@ function updatePanel(key, content, isSpeaking, status) {
 }
 
 // ===== Render panel body =====
+// Two cached subtrees keep long sessions cheap: finished turns are only
+// re-rendered when the turn list actually changes (turnsDirty), and each poll
+// tick touches just the small streaming subtree instead of re-parsing the
+// whole accumulated history every 800ms.
 function renderPanelBody(key, isSpeaking) {
   const ps = panelState[key];
   if (!ps) return;
   const body = ps.body;
 
   const hasTurns = ps.turns.length > 0;
-  const hasStreaming = ps.streaming.trim().length > 0;
+  const streamingText = ps.streaming.trim();
 
-  if (!hasTurns && !hasStreaming) {
+  if (!hasTurns && !streamingText) {
     if (body.querySelector('.sv-placeholder')) return; // keep placeholder
     const displayName = currentMode === 'debate'
       ? getRoleInfo(key, currentCustomPersonas).name
       : (AI_NAMES[ps.aiType] || ps.aiType);
     body.innerHTML = `<div class="sv-placeholder">等待 ${displayName} 发言…</div>`;
+    ps.turnsEl = null;
+    ps.streamingEl = null;
     return;
   }
 
-  let html = '';
-  for (const turn of ps.turns) {
-    html += `<div class="sv-turn-block">`;
-    html += `<div class="sv-turn-label">${escapeHtml(turn.label)}</div>`;
-    html += `<div class="sv-turn-text">${escapeHtml(turn.content)}</div>`;
-    html += `</div>`;
+  // (Re)create the two fixed subtrees when coming back from the placeholder
+  if (!ps.turnsEl || !ps.streamingEl || !body.contains(ps.turnsEl)) {
+    body.innerHTML = '<div class="sv-turns"></div><div class="sv-turn-block sv-streaming-block sv-streaming"></div>';
+    ps.turnsEl = body.querySelector('.sv-turns');
+    ps.streamingEl = body.querySelector('.sv-streaming');
+    ps.turnsDirty = true;
   }
 
-  if (hasStreaming) {
-    html += `<div class="sv-turn-block sv-streaming-block">`;
+  // Finished turns: rebuild only when a turn was snapshotted
+  if (ps.turnsDirty) {
+    let html = '';
+    for (const turn of ps.turns) {
+      html += `<div class="sv-turn-block">`;
+      html += `<div class="sv-turn-label">${escapeHtml(turn.label)}</div>`;
+      html += `<div class="sv-turn-text">${escapeHtml(turn.content)}</div>`;
+      html += `</div>`;
+    }
+    ps.turnsEl.innerHTML = html;
+    ps.turnsDirty = false;
+  }
+
+  // Streaming block: the only part that changes per tick
+  if (streamingText) {
+    let html = '';
     if (hasTurns) {
       const lbl = currentMode === 'debate'
         ? ((key === 'he') ? '终局总结' : '当前发言')
@@ -439,10 +483,11 @@ function renderPanelBody(key, isSpeaking) {
     if (isSpeaking) {
       html += `<span class="sv-typing-cursor"></span>`;
     }
-    html += `</div></div>`;
+    html += `</div>`;
+    ps.streamingEl.innerHTML = html;
+  } else {
+    ps.streamingEl.innerHTML = '';
   }
-
-  body.innerHTML = html;
 
   // Auto-scroll to bottom ONLY if the user hasn't scrolled up
   if (!ps.userScrolledUp) {

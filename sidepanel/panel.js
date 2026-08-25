@@ -8,6 +8,26 @@ function getAIName(aiType) {
   return AI_DISPLAY_NAMES[aiType] || capitalize(aiType);
 }
 
+// Wrap one AI's reply in the XML-ish tag used by every cross-reference /
+// mutual-review / next-round / summary prompt. Single definition so the tag
+// format stays consistent across all prompt builders.
+function wrapAiResponse(aiKey, content) {
+  return `
+<${aiKey}_response>
+${content}
+</${aiKey}_response>
+`;
+}
+
+// Read the normal-mode target checkboxes (single source for send / summary /
+// collect flows, which all operate on "checked models").
+function getCheckedTargets() {
+  return AI_TYPES.filter(ai => {
+    const checkbox = document.getElementById(`target-${ai}`);
+    return checkbox && checkbox.checked;
+  });
+}
+
 // Cross-reference action keywords (inserted into message)
 const CROSS_REF_ACTIONS = {
   evaluate: { prompt: '评价一下' },
@@ -299,25 +319,27 @@ async function handleSend() {
     targets = parsed.mentions;
   } else {
     // Otherwise use checkbox selection
-    targets = AI_TYPES.filter(ai => {
-      const checkbox = document.getElementById(`target-${ai}`);
-      return checkbox && checkbox.checked;
-    });
+    targets = getCheckedTargets();
   }
 
-  if (targets.length === 0) {
+  // /summary resolves its own material and reports a specific Chinese error,
+  // so the generic empty-targets check does not apply to it.
+  if (targets.length === 0 && !parsed.summary) {
     log('No targets selected', 'error');
     return;
   }
 
   sendBtn.disabled = true;
 
-  // Send files first if any
+  // Send files first if any. Encode ONCE — each target lives in its own tab
+  // but the bytes are identical, so re-reading + re-encoding per target used
+  // to multiply large-file base64 work by the number of targets.
   const filesToSend = [...selectedFiles];
   if (filesToSend.length > 0) {
     log(`正在上传 ${filesToSend.length} 个文件...`);
+    const encoded = await Promise.all(filesToSend.map(readFileAsBase64));
     // Each target is a different tab, so uploads can run in parallel
-    await Promise.all(targets.map(target => sendFilesToAI(target, filesToSend)));
+    await Promise.all(targets.map(target => sendEncodedFilesToAI(target, encoded)));
     clearFiles();
     // Wait a bit for files to be processed before sending message
     await new Promise(r => setTimeout(r, 500));
@@ -498,10 +520,7 @@ async function handleCrossReference(parsed) {
   let fullMessage = parsed.originalMessage + '\n';
 
   for (const source of sourceResponses) {
-    fullMessage += `
-<${source.ai}_response>
-${source.response}
-</${source.ai}_response>`;
+    fullMessage += wrapAiResponse(source.ai, source.response);
   }
 
   // Send to all target AIs in parallel
@@ -545,11 +564,7 @@ async function handleMutualReview(participants, prompt) {
     let evalMessage = `以下是其他 AI 的观点：\n`;
 
     for (const sourceAI of otherAIs) {
-      evalMessage += `
-<${sourceAI}_response>
-${responses[sourceAI]}
-</${sourceAI}_response>
-`;
+      evalMessage += wrapAiResponse(sourceAI, responses[sourceAI]) + '\n';
     }
 
     evalMessage += `\n${prompt}`;
@@ -579,11 +594,7 @@ ${responses[sourceAI]}
  */
 async function handleSummary(parsed) {
   // Material: checked models; fall back to the @mentioned model alone
-  const checkedTargets = AI_TYPES.filter(ai => {
-    const checkbox = document.getElementById(`target-${ai}`);
-    return checkbox && checkbox.checked;
-  });
-  let sourceList = checkedTargets;
+  let sourceList = getCheckedTargets();
   if (sourceList.length === 0 && parsed.summarizerAI) sourceList = [parsed.summarizerAI];
   if (sourceList.length === 0) {
     log('[汇总] 请先勾选参与汇总的模型，或用 /summary @模型 指定', 'error');
@@ -607,7 +618,7 @@ async function handleSummary(parsed) {
 
   let summaryMessage = '以下是多个 AI 助手就相同问题的回答，请你作为中立汇总人，综合所有观点生成一份汇总：\n';
   for (const entry of valid) {
-    summaryMessage += `\n<${entry.ai}_response>\n${entry.response}\n</${entry.ai}_response>\n`;
+    summaryMessage += wrapAiResponse(entry.ai, entry.response);
   }
   if (parsed.prompt) {
     summaryMessage += `\n用户要求：${parsed.prompt}\n`;
@@ -631,6 +642,10 @@ async function handleSummary(parsed) {
 // Collected Replies (plain aggregation, no AI processing)
 // ============================================
 
+// Plain-text payload of the current aggregation, kept in a module variable
+// (large text does not belong in a DOM dataset attribute).
+let collectedPlainText = '';
+
 /**
  * Pure formatter: entries [{ai, response}] → clipboard-friendly plain text.
  * Kept DOM-free so it can be unit-tested directly.
@@ -642,10 +657,7 @@ function formatCollectedReplies(entries) {
 }
 
 async function handleCollectReplies() {
-  const checkedTargets = AI_TYPES.filter(ai => {
-    const checkbox = document.getElementById(`target-${ai}`);
-    return checkbox && checkbox.checked;
-  });
+  const checkedTargets = getCheckedTargets();
 
   if (checkedTargets.length === 0) {
     log('[聚合] 请先勾选要聚合的模型', 'error');
@@ -682,20 +694,19 @@ function renderCollectedReplies(validEntries) {
       </div>`;
   }
   content.innerHTML = html;
-  section.dataset.plainText = formatCollectedReplies(validEntries);
+  collectedPlainText = formatCollectedReplies(validEntries);
 
   section.classList.remove('hidden');
   section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 async function copyCollectedReplies() {
-  const section = document.getElementById('collected-summary');
-  if (!section || !section.dataset.plainText) {
+  if (!collectedPlainText) {
     log('[聚合] 没有可复制的聚合内容', 'error');
     return;
   }
 
-  const text = section.dataset.plainText;
+  const text = collectedPlainText;
   try {
     await navigator.clipboard.writeText(text);
     log('[聚合] 全部回复已复制到剪贴板', 'success');
@@ -904,11 +915,12 @@ async function startDiscussion() {
 
   log(`讨论开始: ${selected.map(getAIName).join(' vs ')}`, 'success');
 
-  // Upload selected files to both participants first
+  // Upload selected files to both participants first (encoded once)
   const filesToSend = [...selectedFiles];
   if (filesToSend.length > 0) {
     log(`正在上传 ${filesToSend.length} 个文件...`);
-    await Promise.all(selected.map(ai => sendFilesToAI(ai, filesToSend)));
+    const encoded = await Promise.all(filesToSend.map(readFileAsBase64));
+    await Promise.all(selected.map(ai => sendEncodedFilesToAI(ai, encoded)));
     clearFiles();
     // Wait a bit for files to be processed before sending the topic
     await new Promise(r => setTimeout(r, 500));
@@ -1003,20 +1015,12 @@ async function nextRound() {
   // Send cross-evaluation requests
   // AI1 evaluates AI2's response
   const msg1 = `以下是 ${getAIName(ai2)} 就主题「${discussionState.topic}」的回复：
-
-<${ai2}_response>
-${ai2Response}
-</${ai2}_response>
-
+${wrapAiResponse(ai2, ai2Response)}
 请评价这条回复。你同意什么？不同意什么？有什么需要补充或修改的地方？`;
 
   // AI2 evaluates AI1's response
   const msg2 = `以下是 ${getAIName(ai1)} 就主题「${discussionState.topic}」的回复：
-
-<${ai1}_response>
-${ai1Response}
-</${ai1}_response>
-
+${wrapAiResponse(ai1, ai1Response)}
 请评价这条回复。你同意什么？不同意什么？有什么需要补充或修改的地方？`;
 
   await Promise.all([
@@ -1064,19 +1068,13 @@ async function handleInterject() {
   const msg1 = `${message}
 
 以下是 ${getAIName(ai2)} 的最新回复：
-
-<${ai2}_response>
-${ai2Response}
-</${ai2}_response>`;
+${wrapAiResponse(ai2, ai2Response)}`;
 
   // Send to AI2: user message + AI1's response
   const msg2 = `${message}
 
 以下是 ${getAIName(ai1)} 的最新回复：
-
-<${ai1}_response>
-${ai1Response}
-</${ai1}_response>`;
+${wrapAiResponse(ai1, ai1Response)}`;
 
   await Promise.all([
     sendToAI(ai1, msg1),
@@ -1151,6 +1149,9 @@ ${historyText}`;
     } else if (Date.now() - startedAt > SUMMARY_TIMEOUT) {
       clearInterval(summaryPollTimer);
       summaryPollTimer = null;
+      // Drop the wait set so a late RESPONSE_CAPTURED can't leak into the
+      // history after the user was already told the summary timed out.
+      discussionState.pendingResponses.clear();
       log('[Summary] 总结生成超时，已停止等待', 'error');
       document.getElementById('generate-summary-btn').disabled = false;
       updateDiscussionStatus('ready', '总结超时，可重试或继续讨论');
@@ -1348,10 +1349,11 @@ async function readFileAsBase64(file) {
   });
 }
 
-async function sendFilesToAI(aiType, files) {
-  log(`${aiType}: 准备上传 ${files.length} 个文件...`);
-  const fileDataArray = await Promise.all(files.map(readFileAsBase64));
-  log(`${aiType}: 文件已编码，正在发送...`);
+// Send an ALREADY-encoded file payload to one AI. Encoding happens once in
+// the caller (encodeFilesOnce) so N targets don't re-read/re-encode the same
+// files N times.
+async function sendEncodedFilesToAI(aiType, fileDataArray) {
+  log(`${aiType}: 正在发送 ${fileDataArray.length} 个文件...`);
 
   return new Promise((resolve) => {
     chrome.runtime.sendMessage(
@@ -1363,7 +1365,7 @@ async function sendFilesToAI(aiType, files) {
           return;
         }
         if (response?.success) {
-          log(`${aiType}: 文件上传成功 (${files.length} 个)`, 'success');
+          log(`${aiType}: 文件上传成功 (${fileDataArray.length} 个)`, 'success');
         } else {
           log(`${aiType}: 文件上传失败 - ${response?.error || 'Unknown'}`, 'error');
         }
@@ -1651,12 +1653,13 @@ async function startPersonaDebate() {
   // Save mapping for next session
   saveRoleAIMap();
 
-  // Upload selected files to all mapped AIs first
+  // Upload selected files to all mapped AIs first (encoded once)
   const filesToSend = [...selectedFiles];
   if (filesToSend.length > 0) {
     const uniqueAIs = [...new Set(Object.values(personaDebateState.roleAIMap))];
     log(`正在上传 ${filesToSend.length} 个文件到 ${uniqueAIs.length} 个模型...`);
-    await Promise.all(uniqueAIs.map(ai => sendFilesToAI(ai, filesToSend)));
+    const encoded = await Promise.all(filesToSend.map(readFileAsBase64));
+    await Promise.all(uniqueAIs.map(ai => sendEncodedFilesToAI(ai, encoded)));
     clearFiles();
     // Wait a bit for files to be processed before starting the debate
     await new Promise(r => setTimeout(r, 500));

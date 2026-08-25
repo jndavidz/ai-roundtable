@@ -47,10 +47,12 @@
       ]
     },
 
+    // Order matters: first match wins (kept identical to the previous
+    // hand-written getLatestResponse priority).
     responseSelectors: [
       '.message-bubble',
-      '[data-testid*="message"]',
       '.prose-chat',
+      '[data-testid*="message"]',
       '[class*="markdown"]'
     ],
 
@@ -58,22 +60,8 @@
       '[aria-label*="Stop"]',
       '[aria-label*="停止"]',
       'button[aria-label*="stop"]'
-    ],
+    ]
 
-    getLatestResponse: function() {
-      const selectors = [
-        '.message-bubble',
-        '.prose-chat',
-        '[data-testid*="message"]',
-        '[class*="markdown"]'
-      ];
-      let blocks = [];
-      for (const selector of selectors) {
-        blocks = document.querySelectorAll(selector);
-        if (blocks.length > 0) break;
-      }
-      if (blocks.length === 0) return null;
-      return blocks[blocks.length - 1].innerText.trim();
-    }
+    // getLatestResponse omitted — base.js derives it from responseSelectors.
   });
 })();

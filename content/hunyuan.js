@@ -83,16 +83,8 @@
       'button[aria-label*="stop"]',
       'a[aria-label*="停止"]',
       '[class*="stop-generating"]'
-    ],
+    ]
 
-    getLatestResponse: function() {
-      for (const selector of RESPONSE_SELECTORS) {
-        const blocks = document.querySelectorAll(selector);
-        if (blocks.length > 0) {
-          return blocks[blocks.length - 1].innerText.trim();
-        }
-      }
-      return null;
-    }
+    // getLatestResponse omitted — base.js derives it from responseSelectors.
   });
 })();

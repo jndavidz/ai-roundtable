@@ -47,13 +47,15 @@
       ]
     },
 
+    // Order matters: first match wins (kept identical to the previous
+    // hand-written getLatestResponse priority).
     responseSelectors: [
-      '.ds-markdown',
       '.ds-markdown--block',
+      '.ds-markdown',
       '.markdown-body',
       '[class*="message"] [class*="content"]',
-      '[class*="answer"]',
-      '[class*="response"]'
+      '[class*="answer"] [class*="content"]',
+      '[class*="response"] [class*="content"]'
     ],
 
     // DeepSeek streaming detection: stop button or loading indicators
@@ -63,29 +65,8 @@
       'div[role="button"][aria-label*="stop"]',
       '.stop-button',
       '[class*="stop-generating"]'
-    ],
+    ]
 
-    getLatestResponse: function() {
-      // Try multiple selectors for DeepSeek's response containers
-      const selectors = [
-        '.ds-markdown--block',
-        '.ds-markdown',
-        '.markdown-body',
-        '[class*="message"] [class*="content"]',
-        '[class*="answer"] [class*="content"]',
-        '[class*="response"] [class*="content"]'
-      ];
-
-      let blocks = [];
-      for (const selector of selectors) {
-        blocks = document.querySelectorAll(selector);
-        if (blocks.length > 0) break;
-      }
-
-      if (blocks.length === 0) return null;
-
-      const lastBlock = blocks[blocks.length - 1];
-      return lastBlock.innerText.trim();
-    }
+    // getLatestResponse omitted — base.js derives it from responseSelectors.
   });
 })();

@@ -340,6 +340,22 @@ async function findAITab(aiType) {
 
 // Hostname matching + URL→aiType resolution come from shared/constants.js.
 
+// Chat-path bonuses for the ten adapters whose rule is the same shape:
+// "pathname contains any of these prefixes → +100, otherwise +30".
+// claude and mimo have bespoke rules below (exact paths / hash routing).
+const AI_CHAT_PREFIXES = {
+  chatgpt: ['/c/'],
+  gemini: ['/app/'],
+  deepseek: ['/chat/', '/a/chat/'],
+  glm: ['/chat/', '/main/'],
+  kimi: ['/chat/', '/conversation/'],
+  grok: ['/conversation/', '/chat/'],
+  qianwen: ['/chat/', '/conversation/'],
+  minimax: ['/chat/', '/agent/'],
+  doubao: ['/chat/', '/conversation/'],
+  hunyuan: ['/chat/', '/conversation/']
+};
+
 function scoreAITab(aiType, tab) {
   if (!tab.url) return -Infinity;
 
@@ -367,6 +383,12 @@ function scoreAITab(aiType, tab) {
     score += 20 * recency;
   }
 
+  const prefixes = AI_CHAT_PREFIXES[aiType];
+  if (prefixes) {
+    score += prefixes.some(p => url.pathname.includes(p)) ? 100 : 30;
+    return score;
+  }
+
   if (aiType === 'claude') {
     if (url.hostname !== 'claude.ai') return -Infinity;
 
@@ -380,60 +402,9 @@ function scoreAITab(aiType, tab) {
     else score += 20;
   }
 
-  if (aiType === 'chatgpt') {
-    if (url.pathname.startsWith('/c/')) score += 100;
-    else score += 30;
-  }
-
-  if (aiType === 'gemini') {
-    if (url.pathname.includes('/app/')) score += 100;
-    else score += 30;
-  }
-
-  if (aiType === 'deepseek') {
-    if (url.pathname.includes('/chat/') || url.pathname.includes('/a/chat/')) score += 100;
-    else score += 30;
-  }
-
-  if (aiType === 'glm') {
-    // GLM chat paths on chatglm.cn and z.ai
-    if (url.pathname.includes('/chat/') || url.pathname.includes('/main/')) score += 100;
-    else score += 30;
-  }
-
-  if (aiType === 'kimi') {
-    if (url.pathname.includes('/chat/') || url.pathname.includes('/conversation/')) score += 100;
-    else score += 30;
-  }
-
-  if (aiType === 'grok') {
-    if (url.pathname.includes('/conversation/') || url.pathname.includes('/chat/')) score += 100;
-    else score += 30;
-  }
-
-  if (aiType === 'qianwen') {
-    if (url.pathname.includes('/chat/') || url.pathname.includes('/conversation/')) score += 100;
-    else score += 30;
-  }
-
   if (aiType === 'mimo') {
     // MiMo uses hash-based routing (#/c for chat)
     if (url.hash.includes('/c') || url.pathname.includes('/chat/')) score += 100;
-    else score += 30;
-  }
-
-  if (aiType === 'minimax') {
-    if (url.pathname.includes('/chat/') || url.pathname.includes('/agent/')) score += 100;
-    else score += 30;
-  }
-
-  if (aiType === 'doubao') {
-    if (url.pathname.includes('/chat/') || url.pathname.includes('/conversation/')) score += 100;
-    else score += 30;
-  }
-
-  if (aiType === 'hunyuan') {
-    if (url.pathname.includes('/chat/') || url.pathname.includes('/conversation/')) score += 100;
     else score += 30;
   }
 

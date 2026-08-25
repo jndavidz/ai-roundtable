@@ -1,10 +1,10 @@
 {
   "name": "ai-roundtable",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "private": true,
   "description": "让多个 AI 助手围桌讨论，交叉评价，深度协作（Chrome MV3 扩展）",
   "license": "MIT",
   "scripts": {
-    "test": "node test/base.test.js && node test/dom-utils.test.js && node test/shared-constants.test.js && node test/parse-message.test.js && node test/background-score.test.js && node test/collected-replies.test.js"
+    "test": "node test/base.test.js && node test/dom-utils.test.js && node test/shared-constants.test.js && node test/parse-message.test.js && node test/background-score.test.js && node test/collected-replies.test.js && node test/splitview-mode.test.js"
   }
 }

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-// Tests for panel.js's formatCollectedReplies — the plain-text formatter used
-// by the 聚合 feature (clipboard output). Needs shared/constants.js loaded
-// first for getAIName's display-name lookup.
+// Tests for panel.js's aggregation helpers: formatCollectedReplies (clipboard
+// plain text) and getCheckedTargets (checkbox reading). Needs
+// shared/constants.js loaded first for the AI display-name lookup.
 
 const fs = require('fs');
 const path = require('path');
@@ -10,9 +10,12 @@ const vm = require('vm');
 
 const ROOT = path.join(__dirname, '..');
 
-function loadPanel() {
-  const stubElement = () => ({
+function loadPanel(checkedIds = []) {
+  const checked = new Set(checkedIds);
+  const stubElement = (id) => ({
+    id,
     value: '',
+    checked: id ? checked.has(id) : false,
     addEventListener() {},
     classList: { add() {}, remove() {}, toggle() { return false; } }
   });
@@ -20,7 +23,7 @@ function loadPanel() {
   const sandbox = {
     console,
     document: {
-      getElementById: () => stubElement(),
+      getElementById: (id = '') => stubElement(id),
       querySelectorAll: () => [],
       querySelector: () => null,
       addEventListener() {},
@@ -70,6 +73,17 @@ function assert(cond, msg) {
 
   // ---- unknown aiType falls back to capitalized type name ----
   assert(format([{ ai: 'newai', response: 'y' }]) === '【Newai】\ny', 'fallback naming broken');
+
+  // ---- getCheckedTargets: checkbox order + only checked boxes ----
+  const s2 = loadPanel(['target-chatgpt', 'target-doubao']); // chatgpt & doubao checked
+  const getChecked = s2.__read('getCheckedTargets');
+  if (typeof getChecked !== 'function') throw new Error('getCheckedTargets not found');
+  assert(JSON.stringify(getChecked()) === JSON.stringify(['chatgpt', 'doubao']),
+    `checked targets wrong: ${JSON.stringify(getChecked())}`);
+
+  // nothing checked → empty list
+  const s3 = loadPanel([]);
+  assert(s3.__read('getCheckedTargets')().length === 0, 'no checkboxes should yield []');
 
   console.log('collected replies tests passed');
 })().catch(err => {

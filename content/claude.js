@@ -105,9 +105,13 @@
       });
 
       if (responseBlocks.length > 0) {
-        // Get the last non-thinking block
-        const lastBlock = responseBlocks[responseBlocks.length - 1];
-        return lastBlock.innerText.trim();
+        // Join ALL non-thinking blocks: a single reply often spans several
+        // markdown blocks (text + table + code section), and returning only
+        // the last one silently dropped the rest of the answer.
+        return responseBlocks
+          .map(block => block.innerText.trim())
+          .filter(Boolean)
+          .join('\n\n');
       }
 
       return null;

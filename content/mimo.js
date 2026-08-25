@@ -58,23 +58,8 @@
       'button[aria-label*="停止"]',
       'button[aria-label*="Stop"]',
       '[class*="stop-generating"]'
-    ],
+    ]
 
-    getLatestResponse: function() {
-      const selectors = [
-        '[class*="markdown"]',
-        '[class*="message"] [class*="content"]',
-        '[class*="answer"]',
-        '[class*="response"]',
-        '[class*="bubble"]'
-      ];
-      for (const selector of selectors) {
-        const blocks = document.querySelectorAll(selector);
-        if (blocks.length > 0) {
-          return blocks[blocks.length - 1].innerText.trim();
-        }
-      }
-      return null;
-    }
+    // getLatestResponse omitted — base.js derives it from responseSelectors.
   });
 })();
