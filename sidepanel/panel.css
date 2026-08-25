@@ -1345,6 +1345,97 @@ header .subtitle {
 #summary-content .ai-name.hunyuan { color: var(--ai-hunyuan); }
 #summary-content .ai-name.doubao { color: var(--ai-doubao); }
 
+/* ===== Collected replies (plain aggregation, normal mode) ===== */
+.collected-summary {
+  margin-top: 12px;
+  padding: 14px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(var(--blur-glass));
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+}
+
+.collected-summary.hidden {
+  display: none;
+}
+
+.collected-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.collected-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.collected-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.collected-actions button {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.collected-actions button:hover {
+  color: var(--text-primary);
+  border-color: var(--accent-primary);
+}
+
+.collected-item {
+  margin: 10px 0;
+  padding: 12px;
+  background: var(--bg-elevated);
+  border-left: 3px solid var(--accent-primary);
+  border-radius: 10px;
+}
+
+.collected-item:first-child {
+  margin-top: 0;
+}
+
+.collected-item:last-child {
+  margin-bottom: 0;
+}
+
+.collected-item .ai-name {
+  font-weight: 600;
+  margin-bottom: 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.collected-text {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.collected-item .ai-name.claude { color: var(--ai-claude); }
+.collected-item .ai-name.chatgpt { color: var(--ai-chatgpt); }
+.collected-item .ai-name.grok { color: var(--ai-grok); }
+.collected-item .ai-name.gemini { color: var(--ai-gemini); }
+.collected-item .ai-name.deepseek { color: var(--ai-deepseek); }
+.collected-item .ai-name.glm { color: var(--ai-glm); }
+.collected-item .ai-name.kimi { color: var(--ai-kimi); }
+.collected-item .ai-name.qianwen { color: var(--ai-qianwen); }
+.collected-item .ai-name.mimo { color: var(--ai-mimo); }
+.collected-item .ai-name.minimax { color: var(--ai-minimax); }
+.collected-item .ai-name.hunyuan { color: var(--ai-hunyuan); }
+.collected-item .ai-name.doubao { color: var(--ai-doubao); }
+
 /* Brand colors for participant option names */
 .participant-option .target-name.claude { color: var(--ai-claude); }
 .participant-option .target-name.chatgpt { color: var(--ai-chatgpt); }

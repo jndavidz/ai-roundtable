@@ -94,8 +94,10 @@ function setupEventListeners() {
     }
   });
 
-  // Shortcut buttons (/cross, <-)
+  // Shortcut buttons (/cross, /summary, <-) — only those carrying text to
+  // insert (the 聚合 button is an action button and binds its own handler)
   document.querySelectorAll('.shortcut-btn').forEach(btn => {
+    if (!btn.dataset.insert) return;
     btn.addEventListener('click', () => {
       const insertText = btn.dataset.insert;
       const cursorPos = messageInput.selectionStart;
@@ -106,6 +108,13 @@ function setupEventListeners() {
       messageInput.focus();
       messageInput.selectionStart = messageInput.selectionEnd = cursorPos + insertText.length;
     });
+  });
+
+  // 聚合 button — plain aggregation of checked models' latest replies
+  document.getElementById('collect-btn')?.addEventListener('click', handleCollectReplies);
+  document.getElementById('copy-collected-btn')?.addEventListener('click', copyCollectedReplies);
+  document.getElementById('close-collected-btn')?.addEventListener('click', () => {
+    document.getElementById('collected-summary').classList.add('hidden');
   });
 
   // Action select - insert action prompt into textarea
@@ -616,6 +625,96 @@ async function handleSummary(parsed) {
     log(`[汇总] 汇总请求已发送给 ${getAIName(summarizer)}，完成后请在对应标签页查看结果`, 'success');
   }
   return result?.success === true;
+}
+
+// ============================================
+// Collected Replies (plain aggregation, no AI processing)
+// ============================================
+
+/**
+ * Pure formatter: entries [{ai, response}] → clipboard-friendly plain text.
+ * Kept DOM-free so it can be unit-tested directly.
+ */
+function formatCollectedReplies(entries) {
+  return entries
+    .map(entry => `【${getAIName(entry.ai)}】\n${entry.response.trim()}`)
+    .join('\n\n');
+}
+
+async function handleCollectReplies() {
+  const checkedTargets = AI_TYPES.filter(ai => {
+    const checkbox = document.getElementById(`target-${ai}`);
+    return checkbox && checkbox.checked;
+  });
+
+  if (checkedTargets.length === 0) {
+    log('[聚合] 请先勾选要聚合的模型', 'error');
+    return;
+  }
+
+  log(`[聚合] 正在获取 ${checkedTargets.map(getAIName).join('、')} 的最新回复...`);
+  const entries = await Promise.all(checkedTargets.map(async (ai) => ({
+    ai,
+    response: await getLatestResponse(ai)
+  })));
+  // Keep order stable (follow the checkbox order) and drop models without a reply
+  const valid = entries.filter(e => e.response && e.response.trim().length > 0);
+
+  if (valid.length === 0) {
+    log('[聚合] 勾选的模型都还没有回复', 'error');
+    return;
+  }
+
+  renderCollectedReplies(valid);
+  log(`[聚合] 已聚合 ${valid.map(e => getAIName(e.ai)).join('、')} 共 ${valid.length} 份回复`, 'success');
+}
+
+function renderCollectedReplies(validEntries) {
+  const section = document.getElementById('collected-summary');
+  const content = document.getElementById('collected-content');
+
+  let html = '';
+  for (const entry of validEntries) {
+    html += `
+      <div class="collected-item">
+        <div class="ai-name ${entry.ai}">${getAIName(entry.ai)}</div>
+        <div class="collected-text">${escapeHtml(entry.response).replace(/\n/g, '<br>')}</div>
+      </div>`;
+  }
+  content.innerHTML = html;
+  section.dataset.plainText = formatCollectedReplies(validEntries);
+
+  section.classList.remove('hidden');
+  section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function copyCollectedReplies() {
+  const section = document.getElementById('collected-summary');
+  if (!section || !section.dataset.plainText) {
+    log('[聚合] 没有可复制的聚合内容', 'error');
+    return;
+  }
+
+  const text = section.dataset.plainText;
+  try {
+    await navigator.clipboard.writeText(text);
+    log('[聚合] 全部回复已复制到剪贴板', 'success');
+  } catch (err) {
+    // Fallback for contexts where the async clipboard API is unavailable
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand('copy');
+      log('[聚合] 全部回复已复制到剪贴板', 'success');
+    } catch (copyErr) {
+      log('[聚合] 复制失败：' + copyErr.message, 'error');
+    }
+    document.body.removeChild(textarea);
+  }
 }
 
 async function getLatestResponse(aiType) {

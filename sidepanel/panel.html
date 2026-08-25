@@ -116,6 +116,7 @@
           <button class="shortcut-btn" id="mutual-btn" data-insert="/mutual " title="互评：让所有 AI 互相评价">/mutual</button>
           <button class="shortcut-btn" id="cross-btn" data-insert="/cross " title="交叉：两个围攻一个">/cross</button>
           <button class="shortcut-btn" id="summary-btn" data-insert="/summary " title="汇总：把所有选中模型的最新回复交给一个模型做结构化总结">/summary</button>
+          <button class="shortcut-btn" id="collect-btn" title="聚合：直接把选中模型的最新回复原文收集到一起（不经 AI 加工）">聚合</button>
           <button class="shortcut-btn" id="arrow-btn" data-insert=" <- " title="来源箭头：指定被评价的 AI">←</button>
           <select id="action-select" class="action-select" title="插入动作词">
             <option value="">动作</option>
@@ -186,6 +187,19 @@
         </div>
       </div>
       <div id="file-list" class="file-list"></div>
+    </section>
+
+    <!-- Collected replies (plain aggregation of the checked models' latest
+         responses — no AI processing; view and copy in place) -->
+    <section class="collected-summary hidden" id="collected-summary">
+      <div class="collected-header">
+        <span class="collected-title">📋 各方回复聚合</span>
+        <div class="collected-actions">
+          <button type="button" id="copy-collected-btn" title="复制全部回复（纯文本）">复制全文</button>
+          <button type="button" id="close-collected-btn" title="收起">&times;</button>
+        </div>
+      </div>
+      <div id="collected-content"></div>
     </section>
 
     </div><!-- end normal-mode -->
