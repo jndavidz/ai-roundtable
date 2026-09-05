@@ -117,7 +117,9 @@
     //    never leak into the captured text.
     clone.querySelectorAll('style, script').forEach(el => el.remove());
 
-    // 2) Reasoning / thinking blocks and reference/footer noise.
+    // 2) Reasoning / thinking blocks. We do NOT strip generic "citation"/"source"
+    //    nodes — those also wrap the answer's own inline citations and "来源"
+    //    section, which should be kept.
     const noiseSelectors = [
       '[class*="think"]',
       '[class*="thought"]',
@@ -127,15 +129,7 @@
       '[class*="chain"]',
       '[class*="cot"]',
       '[data-type*="think"]',
-      '[data-type*="reason"]',
-      '[class*="reference"]',
-      '[class*="citation"]',
-      '[class*="quote"]',
-      '[class*="source"]',
-      '[class*="footnote"]',
-      '[class*="refer"]',
-      '[class*="引用"]',
-      '[class*="溯源"]'
+      '[data-type*="reason"]'
     ];
     for (const selector of noiseSelectors) {
       clone.querySelectorAll(selector).forEach(el => el.remove());

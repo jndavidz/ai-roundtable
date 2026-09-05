@@ -143,70 +143,54 @@ function runExtract(adapter, buildDoc) {
 function buildScenario({ withThinking = false } = {}) {
   const root = new FakeEl('div');
 
-  // The REAL bug report shows the GLM answer is split across MULTIPLE message
-  // containers (a streamed / multi-block reply). Previously only the trailing
-  // container was captured, truncating the reply. So we model two message blocks.
-  function makeMessage(text) {
-    const message = new FakeEl('div', ['message', 'assistant']);
-    const chatContent = new FakeEl('div', ['chat-content']);
-    const md = new FakeEl('div', ['markdown']);
+  // Mirror the REAL chatglm.cn page (observed 2026): a thinking block precedes
+  // the answer, the answer is one big .markdown-body (with <details> and a
+  // mermaid <style> blob), and a "来源 / 推荐问题" footer follows it.
+  function makeAnswer(text) {
+    const md = new FakeEl('div', ['markdown-body']);
     md.innerText = text;
-    chatContent.appendChild(md);
-    message.appendChild(chatContent);
-    return { message, md };
+    return md;
   }
 
-  const m1 = makeMessage([
-    '核心结论：推荐 A 与 B。',
-    '',
-    '一、按场景的快速推荐',
-    '1. 场景 X → 方案 A',
-    '2. 场景 Y → 方案 B'
-  ].join('\n'));
-  root.appendChild(m1.message);
-
-  const m2 = makeMessage([
-    '二、逐个插件深度分析',
-    '插件 1 的细节……',
-    '插件 2 的细节……'
-  ].join('\n'));
-  root.appendChild(m2.message);
-
-  // a nested content sub-block inside the first message (sites nest this way)
-  const content = new FakeEl('div', ['content']);
-  content.innerText = '补充说明：注意成本。';
-  m1.md.appendChild(content);
-
-  // ---- noise that previously leaked into innerText ----
-  // A separate "引用 / references" sidebar whose anchors leak domain names.
-  // It must NOT appear in the aggregated reply.
-  const refs = new FakeEl('div', ['references', '引用']);
-  refs.innerText = 'tencent.com aliyun.com github.com toutiao.com';
-  root.appendChild(refs);
-
-  // A stray secondary bubble that matches [class*="response"].
-  const secondary = new FakeEl('div', ['response']);
-  secondary.innerText = '+1';
-  root.appendChild(secondary);
-
+  // ---- thinking block (class think-block) — must be stripped ----
   if (withThinking) {
-    const think = new FakeEl('div', ['thinking']);
-    think.attributes['data-type'] = 'thinking';
-    think.innerText = '（这是思维链，不应出现在聚合结果里）';
-    m1.md.appendChild(think);
+    const think = new FakeEl('div', ['think-block']);
+    think.innerText = [
+      'Hmm, 用户想为 DeepSeek Harness 找搜索插件……',
+      'tencent.com 以及是否需要 API key 这些实际问题。',
+      'aliyun.com +1'
+    ].join('\n');
+    root.appendChild(think);
   }
 
-  // A thinking block under a DIFFERENT (previously-unmatched) class — exercises
-  // the broadened thinking detection (think-block / reasoning-content ...).
-  const thinkBlock = new FakeEl('div', ['think-block']);
-  thinkBlock.innerText = 'Hmm, 用户想为 DSH 找搜索插件……（内部思考，不应出现）';
-  m1.md.appendChild(thinkBlock);
+  // ---- the actual answer ----
+  const answer = makeAnswer([
+    '基于对最新社区插件和最佳实践的调研，为 DSH 选择搜索插件……',
+    '',
+    '🏆 核心推荐插件概览',
+    'ModSearch @liustack/modsearch 功能全面、免费起步 github.com',
+    '',
+    '<details> 安装与快速配置：dsh plugin --profile web add @liustack/modsearch </details>',
+    '',
+    '✅ 总结 对于绝大多数用户，ModSearch 是最佳起点。'
+  ].join('\n'));
 
-  // A mermaid diagram injected as a <style> blob inside a real message — its
-  // CSS (#mmd-...) must NOT leak into the captured text.
+  // nested mermaid <style> blob — must NOT leak
   const style = new FakeEl('style');
   style.innerText = '#mmd-1788611910196-3{font-family:"PingFang SC";}@keyframes dash{to{stroke-dashoffset:0;}}';
-  m2.md.appendChild(style);
+  answer.appendChild(style);
+
+  // nested mermaid diagram text (real answer content — must be KEPT)
+  const mermaid = new FakeEl('div', ['mermaid']);
+  mermaid.innerText = '开始选择DSH搜索插件 主要需求是什么？ ModSearch dsh-web-search-pro';
+  answer.appendChild(mermaid);
+
+  root.appendChild(answer);
+
+  // ---- footer: 来源 / 推荐问题 (separate container, should NOT match) ----
+  const footer = new FakeEl('div', ['sources-footer']);
+  footer.innerText = '20个来源 ModSearch如何配置Tavily和Exa的Key？ 和我聊聊天吧';
+  root.appendChild(footer);
 
   return makeDoc(root);
 }
@@ -216,29 +200,32 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
 // ---- tests ------------------------------------------------------------------
 
 (async () => {
-  // Kimi: full reply must be captured, trailing citations/+1/thinking/mermaid excluded.
+  // Kimi: full reply must be captured, thinking/mermaid-style excluded.
   {
-    const out = runExtract('content/kimi.js', () => buildScenario());
-    assert(out.includes('核心结论'), 'kimi: missing 核心结论 (truncated)');
-    assert(out.includes('逐个插件深度分析'), 'kimi: missing 深度分析 section');
-    assert(out.includes('补充说明：注意成本'), 'kimi: missing nested content block');
-    assert(!out.includes('tencent.com'), 'kimi: leaked citation domains into reply');
-    assert(!out.includes('+1'), 'kimi: captured stray secondary node');
+    const out = runExtract('content/kimi.js', () => buildScenario({ withThinking: true }));
+    assert(out.includes('核心推荐插件概览'), 'kimi: missing answer body (truncated)');
+    assert(out.includes('ModSearch'), 'kimi: missing ModSearch in reply');
+    assert(out.includes('dsh plugin'), 'kimi: missing <details> install command');
+    assert(out.includes('开始选择DSH搜索插件'), 'kimi: missing mermaid diagram text');
     assert(!out.includes('Hmm, 用户想'), 'kimi: thinking block leaked into reply');
     assert(!out.includes('#mmd-'), 'kimi: mermaid <style> CSS leaked into reply');
     console.log('kimi aggregation OK (len=' + out.length + ')');
   }
 
-  // GLM: full reply + thinking stripped, citations excluded.
+  // GLM: same real-page shape — thinking + mermaid style stripped, answer kept.
   {
     const out = runExtract('content/glm.js', () => buildScenario({ withThinking: true }));
-    assert(out.includes('核心结论'), 'glm: missing 核心结论 (truncated)');
-    assert(out.includes('逐个插件深度分析'), 'glm: missing 深度分析 section');
-    assert(!out.includes('思维链'), 'glm: thinking block leaked into reply');
+    assert(out.includes('核心推荐插件概览'), 'glm: missing answer body (truncated)');
+    assert(out.includes('ModSearch'), 'glm: missing ModSearch in reply');
+    assert(out.includes('dsh plugin'), 'glm: missing <details> install command');
+    assert(out.includes('开始选择DSH搜索插件'), 'glm: missing mermaid diagram text');
     assert(!out.includes('Hmm, 用户想'), 'glm: think-block leaked into reply');
     assert(!out.includes('#mmd-'), 'glm: mermaid <style> CSS leaked into reply');
-    assert(!out.includes('tencent.com'), 'glm: leaked citation domains into reply');
-    assert(!out.includes('+1'), 'glm: captured stray secondary node');
+    // The leaked domains lived INSIDE the thinking block, so stripping thinking
+    // removes them. (github.com in the answer itself is kept on purpose.)
+    assert(!out.includes('tencent.com'), 'glm: thinking-domain tencent.com leaked');
+    assert(!out.includes('aliyun.com'), 'glm: thinking-domain aliyun.com leaked');
+    assert(!out.includes('20个来源'), 'glm: footer/sources section leaked in');
     console.log('glm aggregation OK (len=' + out.length + ', thinking stripped)');
   }
 

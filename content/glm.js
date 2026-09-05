@@ -144,6 +144,11 @@
     clone.querySelectorAll('style, script').forEach(el => el.remove());
 
     // 2) Reasoning / thinking blocks (GLM's "已深度思考" collapsible sections).
+    //    These hold the leaked citation domains (tencent.com / aliyun.com …),
+    //    so stripping them removes the domain noise entirely.
+    //    NOTE: we deliberately do NOT strip generic "citation"/"source" nodes —
+    //    those also wrap the ANSWER's own inline citations (github.com …) and
+    //    its "来源" section, which the user wants kept.
     const noiseSelectors = [
       '[class*="think"]',
       '[class*="thought"]',
@@ -154,17 +159,7 @@
       '[class*="cot"]',
       '[class*="overflow-hidden"][class*="max-h"]',
       '[data-type*="think"]',
-      '[data-type*="reason"]',
-      // Reference / citation sidebars and footers that leak domain names
-      // (tencent.com, aliyun.com, ...) into innerText.
-      '[class*="reference"]',
-      '[class*="citation"]',
-      '[class*="quote"]',
-      '[class*="source"]',
-      '[class*="footnote"]',
-      '[class*="refer"]',
-      '[class*="引用"]',
-      '[class*="溯源"]'
+      '[data-type*="reason"]'
     ];
     for (const selector of noiseSelectors) {
       clone.querySelectorAll(selector).forEach(el => el.remove());
