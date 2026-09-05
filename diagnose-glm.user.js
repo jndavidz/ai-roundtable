@@ -82,8 +82,12 @@
   const final = parts.join('\n\n').trim();
   console.log('[诊断] ===== 最终聚合文本（前 600 字）=====');
   console.log(final.slice(0, 600));
+  console.log('[诊断] ===== 最终聚合文本（末尾 400 字）=====');
+  console.log(final.slice(-400));
   console.log('[诊断] 含 tencent.com?', final.includes('tencent.com'),
               ' 含 aliyun.com?', final.includes('aliyun.com'),
               ' 含 #mmd-?', final.includes('#mmd-'),
               ' 含 Hmm?', /Hmm/.test(final));
+  console.log('[诊断] 说明：tencent.com/aliyun.com 若仅出现在正文「💡 重要提醒」段（含 +1），');
+  console.log('[诊断]       属 GLM 正文合法引用，与 github.com 同理；只有 Hmm?=true 才表示 thinking 泄漏。');
 })();
