@@ -132,20 +132,29 @@
     }
   });
 
-  // Pull the clean answer text out of a single container: drop thinking blocks
-  // and reference/footer noise, then read innerText.
+  // Pull the clean answer text out of a single container: drop thinking blocks,
+  // reference/footer noise and injected <style>/<script> (e.g. mermaid chart
+  // CSS), then read innerText.
   function extractAnswerText(element) {
     if (!element) return '';
     const clone = element.cloneNode(true);
 
-    // Reasoning / thinking blocks.
+    // 1) Always drop raw style/script so injected CSS blobs (mermaid diagrams,
+    //    #mmd-... rules) never leak into the captured text.
+    clone.querySelectorAll('style, script').forEach(el => el.remove());
+
+    // 2) Reasoning / thinking blocks (GLM's "已深度思考" collapsible sections).
     const noiseSelectors = [
       '[class*="think"]',
       '[class*="thought"]',
       '[class*="reasoning"]',
+      '[class*="thinking"]',
+      '[class*="analysis"]',
+      '[class*="chain"]',
+      '[class*="cot"]',
       '[class*="overflow-hidden"][class*="max-h"]',
-      '[data-type="thinking"]',
-      '[data-type="reasoning"]',
+      '[data-type*="think"]',
+      '[data-type*="reason"]',
       // Reference / citation sidebars and footers that leak domain names
       // (tencent.com, aliyun.com, ...) into innerText.
       '[class*="reference"]',
@@ -160,6 +169,15 @@
     for (const selector of noiseSelectors) {
       clone.querySelectorAll(selector).forEach(el => el.remove());
     }
+
+    // 3) Collapsible thinking wrappers whose class isn't caught above but whose
+    //    header text is the Chinese "thinking" label.
+    clone.querySelectorAll('*').forEach(el => {
+      const headerText = (el.innerText || '').trim();
+      if (headerText === '思考' || headerText === '已深度思考' || headerText === '深度思考') {
+        el.remove();
+      }
+    });
 
     return clone.innerText || '';
   }

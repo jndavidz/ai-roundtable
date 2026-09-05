@@ -196,6 +196,18 @@ function buildScenario({ withThinking = false } = {}) {
     m1.md.appendChild(think);
   }
 
+  // A thinking block under a DIFFERENT (previously-unmatched) class — exercises
+  // the broadened thinking detection (think-block / reasoning-content ...).
+  const thinkBlock = new FakeEl('div', ['think-block']);
+  thinkBlock.innerText = 'Hmm, 用户想为 DSH 找搜索插件……（内部思考，不应出现）';
+  m1.md.appendChild(thinkBlock);
+
+  // A mermaid diagram injected as a <style> blob inside a real message — its
+  // CSS (#mmd-...) must NOT leak into the captured text.
+  const style = new FakeEl('style');
+  style.innerText = '#mmd-1788611910196-3{font-family:"PingFang SC";}@keyframes dash{to{stroke-dashoffset:0;}}';
+  m2.md.appendChild(style);
+
   return makeDoc(root);
 }
 
@@ -204,7 +216,7 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
 // ---- tests ------------------------------------------------------------------
 
 (async () => {
-  // Kimi: full reply must be captured, trailing citations/+1 excluded.
+  // Kimi: full reply must be captured, trailing citations/+1/thinking/mermaid excluded.
   {
     const out = runExtract('content/kimi.js', () => buildScenario());
     assert(out.includes('核心结论'), 'kimi: missing 核心结论 (truncated)');
@@ -212,6 +224,8 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert(out.includes('补充说明：注意成本'), 'kimi: missing nested content block');
     assert(!out.includes('tencent.com'), 'kimi: leaked citation domains into reply');
     assert(!out.includes('+1'), 'kimi: captured stray secondary node');
+    assert(!out.includes('Hmm, 用户想'), 'kimi: thinking block leaked into reply');
+    assert(!out.includes('#mmd-'), 'kimi: mermaid <style> CSS leaked into reply');
     console.log('kimi aggregation OK (len=' + out.length + ')');
   }
 
@@ -221,6 +235,8 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert(out.includes('核心结论'), 'glm: missing 核心结论 (truncated)');
     assert(out.includes('逐个插件深度分析'), 'glm: missing 深度分析 section');
     assert(!out.includes('思维链'), 'glm: thinking block leaked into reply');
+    assert(!out.includes('Hmm, 用户想'), 'glm: think-block leaked into reply');
+    assert(!out.includes('#mmd-'), 'glm: mermaid <style> CSS leaked into reply');
     assert(!out.includes('tencent.com'), 'glm: leaked citation domains into reply');
     assert(!out.includes('+1'), 'glm: captured stray secondary node');
     console.log('glm aggregation OK (len=' + out.length + ', thinking stripped)');

@@ -106,13 +106,28 @@
     }
   });
 
-  // Pull clean answer text from one container: drop reference/footer noise
-  // (citation sidebars whose anchors leak domain names like tencent.com /
-  // aliyun.com) then read innerText.
+  // Pull clean answer text from one container: drop thinking blocks, reference/
+  // footer noise, and injected <style>/<script> (e.g. mermaid chart CSS),
+  // then read innerText.
   function extractAnswerText(element) {
     if (!element) return '';
     const clone = element.cloneNode(true);
+
+    // 1) Always drop raw style/script so injected CSS blobs (mermaid diagrams)
+    //    never leak into the captured text.
+    clone.querySelectorAll('style, script').forEach(el => el.remove());
+
+    // 2) Reasoning / thinking blocks and reference/footer noise.
     const noiseSelectors = [
+      '[class*="think"]',
+      '[class*="thought"]',
+      '[class*="reasoning"]',
+      '[class*="thinking"]',
+      '[class*="analysis"]',
+      '[class*="chain"]',
+      '[class*="cot"]',
+      '[data-type*="think"]',
+      '[data-type*="reason"]',
       '[class*="reference"]',
       '[class*="citation"]',
       '[class*="quote"]',
@@ -125,6 +140,15 @@
     for (const selector of noiseSelectors) {
       clone.querySelectorAll(selector).forEach(el => el.remove());
     }
+
+    // 3) Collapsible thinking wrappers labelled with the Chinese "thinking" text.
+    clone.querySelectorAll('*').forEach(el => {
+      const headerText = (el.innerText || '').trim();
+      if (headerText === '思考' || headerText === '已深度思考' || headerText === '深度思考') {
+        el.remove();
+      }
+    });
+
     return clone.innerText || '';
   }
 })();
