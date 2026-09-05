@@ -111,6 +111,10 @@
   // then read innerText.
   function extractAnswerText(element) {
     if (!element) return '';
+
+    // If the node itself IS a thinking block, return nothing.
+    if (isThinkingElement(element)) return '';
+
     const clone = element.cloneNode(true);
 
     // 1) Always drop raw style/script so injected CSS blobs (mermaid diagrams)
@@ -144,5 +148,18 @@
     });
 
     return clone.innerText || '';
+  }
+
+  // True when an element is (or wraps) a reasoning/thinking block.
+  function isThinkingElement(el) {
+    if (!el) return false;
+    const cls = (el.className || '') + ' ' + (el.getAttribute && el.getAttribute('class') || '');
+    if (/thinking|thought|reasoning|深度思考/.test(cls)) return true;
+    let p = el.parentElement;
+    while (p) {
+      if (/thinking|thought|reasoning|深度思考/.test(p.className || '')) return true;
+      p = p.parentElement;
+    }
+    return false;
   }
 })();

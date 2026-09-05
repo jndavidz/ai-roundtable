@@ -22,6 +22,7 @@
   const broad = new Set(['[class*="response"]', '[class*="bubble"]']);
   const noise = [
     'style', 'script',
+    '.text-advance-thinking-content',
     '[class*="think"]', '[class*="thought"]', '[class*="reasoning"]',
     '[class*="thinking"]', '[class*="analysis"]', '[class*="chain"]', '[class*="cot"]',
     '[data-type*="think"]', '[data-type*="reason"]'
@@ -40,6 +41,8 @@
   const seen = new Set();
   const parts = [];
   console.log('[诊断] 站点 =', site, ' 容器选择器 =', sels.join(' | '));
+  console.log('[诊断] thinking 命中数 =',
+    document.querySelectorAll('.text-advance-thinking-content, [class*="thinking"], [class*="think"], [class*="reasoning"]').length);
   for (const sel of sels) {
     document.querySelectorAll(sel).forEach(node => {
       if (seen.has(node)) return;
@@ -50,10 +53,11 @@
       const hasStyle = /#mmd-|@keyframes|font-family/.test(raw);
       const isBroad = broad.has(sel);
       const dropped = isBroad && cleaned.length < 20;
+      const selfThinking = /thinking|thought|reasoning|深度思考/.test(node.className || '');
       console.log(
         `[诊断] sel=${sel} cls="${node.className}" ` +
         `rawLen=${raw.length} cleanLen=${cleaned.length} ` +
-        `thinking=${isThinking} style=${hasStyle} dropped=${dropped}`
+        `thinking=${isThinking} selfThinking=${selfThinking} style=${hasStyle} dropped=${dropped}`
       );
       if (cleaned && !dropped) parts.push(cleaned);
     });

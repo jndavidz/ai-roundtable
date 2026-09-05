@@ -137,6 +137,12 @@
   // CSS), then read innerText.
   function extractAnswerText(element) {
     if (!element) return '';
+
+    // Thinking blocks on chatglm.cn/z.ai carry the class "text-advance-thinking-
+    // content" (and similar) and sit INSIDE the main .answer container. If the
+    // node we were handed IS itself a thinking block, return nothing.
+    if (isThinkingElement(element)) return '';
+
     const clone = element.cloneNode(true);
 
     // 1) Always drop raw style/script so injected CSS blobs (mermaid diagrams,
@@ -150,6 +156,7 @@
     //    those also wrap the ANSWER's own inline citations (github.com …) and
     //    its "来源" section, which the user wants kept.
     const noiseSelectors = [
+      '.text-advance-thinking-content',
       '[class*="think"]',
       '[class*="thought"]',
       '[class*="reasoning"]',
@@ -165,8 +172,7 @@
       clone.querySelectorAll(selector).forEach(el => el.remove());
     }
 
-    // 3) Collapsible thinking wrappers whose class isn't caught above but whose
-    //    header text is the Chinese "thinking" label.
+    // 3) Collapsible thinking wrappers labelled with the Chinese "thinking" text.
     clone.querySelectorAll('*').forEach(el => {
       const headerText = (el.innerText || '').trim();
       if (headerText === '思考' || headerText === '已深度思考' || headerText === '深度思考') {
@@ -175,5 +181,21 @@
     });
 
     return clone.innerText || '';
+  }
+
+  // True when an element is (or is inside) a reasoning/thinking block. Used so a
+  // container that IS the thinking block returns nothing instead of leaking.
+  function isThinkingElement(el) {
+    if (!el) return false;
+    const cls = (el.className || '') + ' ' + (el.getAttribute && el.getAttribute('class') || '');
+    if (/thinking|thought|reasoning|深度思考/.test(cls)) return true;
+    // Also walk up a little in case the captured node wraps the thinking block.
+    let p = el.parentElement;
+    while (p) {
+      const pcls = (p.className || '');
+      if (/thinking|thought|reasoning|深度思考/.test(pcls)) return true;
+      p = p.parentElement;
+    }
+    return false;
   }
 })();

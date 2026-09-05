@@ -152,19 +152,10 @@ function buildScenario({ withThinking = false } = {}) {
     return md;
   }
 
-  // ---- thinking block (class think-block) — must be stripped ----
-  if (withThinking) {
-    const think = new FakeEl('div', ['think-block']);
-    think.innerText = [
-      'Hmm, 用户想为 DeepSeek Harness 找搜索插件……',
-      'tencent.com 以及是否需要 API key 这些实际问题。',
-      'aliyun.com +1'
-    ].join('\n');
-    root.appendChild(think);
-  }
-
-  // ---- the actual answer ----
-  const answer = makeAnswer([
+  // ---- the actual answer wrapper (.answer), which in reality contains BOTH
+  //      the thinking block and the body markdown (per chatglm.cn diagnostic) ----
+  const answer = new FakeEl('div', ['answer']);
+  const body = makeAnswer([
     '基于对最新社区插件和最佳实践的调研，为 DSH 选择搜索插件……',
     '',
     '🏆 核心推荐插件概览',
@@ -174,16 +165,33 @@ function buildScenario({ withThinking = false } = {}) {
     '',
     '✅ 总结 对于绝大多数用户，ModSearch 是最佳起点。'
   ].join('\n'));
+  answer.appendChild(body);
+
+  // ---- thinking block (REAL chatglm.cn class "text-advance-thinking-content")
+  //      nested INSIDE .answer — must be stripped, including inline
+  //      tencent.com / aliyun.com. This is the exact case the diagnostic showed
+  //      failing (thinking survived inside .answer). ----
+  if (withThinking) {
+    const think = new FakeEl('div', ['answer-content-wrap', 'text-advance-thinking-content']);
+    const md = new FakeEl('div', ['markdown-body', 'dr_margin_botttom', 'md-body', 'tl']);
+    md.innerText = [
+      'Hmm, 用户想为 DeepSeek Harness 找搜索插件……',
+      'tencent.com 以及是否需要 API key 这些实际问题。',
+      'aliyun.com +1'
+    ].join('\n');
+    think.appendChild(md);
+    answer.appendChild(think); // nested inside .answer
+  }
 
   // nested mermaid <style> blob — must NOT leak
   const style = new FakeEl('style');
   style.innerText = '#mmd-1788611910196-3{font-family:"PingFang SC";}@keyframes dash{to{stroke-dashoffset:0;}}';
-  answer.appendChild(style);
+  body.appendChild(style);
 
   // nested mermaid diagram text (real answer content — must be KEPT)
   const mermaid = new FakeEl('div', ['mermaid']);
   mermaid.innerText = '开始选择DSH搜索插件 主要需求是什么？ ModSearch dsh-web-search-pro';
-  answer.appendChild(mermaid);
+  body.appendChild(mermaid);
 
   root.appendChild(answer);
 
