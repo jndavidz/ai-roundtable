@@ -31,6 +31,14 @@ class FakeEl {
   }
   get className() { return Array.from(this.classList).join(' '); }
   set className(v) { this.classList = new Set(String(v).split(/\s+/).filter(Boolean)); }
+  get textContent() { return this.innerText; }
+  set textContent(v) { this._text = String(v); this.children = []; }
+  replaceWith(other) {
+    if (!this.parent) return;
+    const i = this.parent.children.indexOf(this);
+    if (i >= 0) this.parent.children.splice(i, 1, other);
+    other.parent = this.parent;
+  }
   get innerText() {
     // Real browsers compute innerText recursively over descendants. Our fake
     // DOM stores text per-node, so aggregate it here (newline-joined) to mimic
@@ -97,7 +105,9 @@ function makeDoc(root) {
   return {
     _root: root,
     querySelectorAll(sel) { return root.querySelectorAll(sel); },
-    querySelector(sel) { return root.querySelector(sel); }
+    querySelector(sel) { return root.querySelector(sel); },
+    // Used by extractAnswerText's table→<pre> conversion.
+    createElement(tag) { return new FakeEl(tag); }
   };
 }
 
@@ -160,10 +170,25 @@ function buildScenario({ withThinking = false } = {}) {
   const s1 = makeSection([
     '基于对最新社区插件和最佳实践的调研，为 DSH 选择搜索插件……',
     '🏆 核心推荐插件概览',
-    'ModSearch @liustack/modsearch 功能全面、免费起步 github.com',
     '<details> 安装与快速配置：dsh plugin --profile web add @liustack/modsearch </details>'
   ].join('\n'));
   answer.appendChild(s1);
+
+  // ---- comparison TABLE: must be converted to readable pipe rows, not flattened ----
+  const table = new FakeEl('table');
+  [['插件名称', '核心定位', '引擎支持'],
+   ['ModSearch', '功能全面、免费起步', 'Firecrawl, Tavily, Exa'],
+   ['dsh-web-search-pro', '企业级', '多引擎']].forEach(cells => {
+    const tr = new FakeEl('tr');
+    cells.forEach(c => {
+      const td = new FakeEl('td');
+      td.innerText = c;
+      tr.appendChild(td);
+    });
+    table.appendChild(tr);
+  });
+  s1.appendChild(table);
+  s1.innerText += '\nModSearch @liustack/modsearch 功能全面、免费起步 github.com';
 
   const s2 = makeSection([
     '✅ 总结 对于绝大多数用户，ModSearch 是最佳起点。',
@@ -226,6 +251,9 @@ function count(hay, needle) { return hay.split(needle).length - 1; }
     assert(!out.includes('开始需求?免费ModSearch'), 'kimi: mermaid PREVIEW labels leaked');
     assert(!out.includes('Hmm, 用户想'), 'kimi: thinking block leaked into reply');
     assert(!out.includes('#mmd-'), 'kimi: mermaid <style> CSS leaked into reply');
+    // Table must be readable pipe rows, NOT flattened into one run-on line.
+    assert(out.includes('| 插件名称 | 核心定位 | 引擎支持 |'), 'kimi: table header row missing');
+    assert(out.includes('| ModSearch | 功能全面、免费起步 | Firecrawl, Tavily, Exa |'), 'kimi: table data row missing');
     console.log('kimi aggregation OK (len=' + out.length + ')');
   }
 
@@ -246,6 +274,8 @@ function count(hay, needle) { return hay.split(needle).length - 1; }
     assert(!out.includes('tencent.com'), 'glm: thinking-domain tencent.com leaked');
     assert(!out.includes('aliyun.com'), 'glm: thinking-domain aliyun.com leaked');
     assert(!out.includes('20个来源'), 'glm: footer/sources section leaked in');
+    assert(out.includes('| 插件名称 | 核心定位 | 引擎支持 |'), 'glm: table header row missing');
+    assert(out.includes('| ModSearch | 功能全面、免费起步 | Firecrawl, Tavily, Exa |'), 'glm: table data row missing');
     console.log('glm aggregation OK (len=' + out.length + ', thinking stripped)');
   }
 

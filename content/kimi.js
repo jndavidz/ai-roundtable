@@ -148,6 +148,23 @@
 
     const clone = element.cloneNode(true);
 
+    // 0) Convert <table> elements into pipe-separated rows BEFORE reading
+    //    innerText — otherwise the whole table is flattened into one run-on
+    //    line that is unreadable. A <pre> keeps newlines, so each row lands
+    //    on its own line.
+    clone.querySelectorAll('table').forEach(t => {
+      const rows = [];
+      t.querySelectorAll('tr').forEach(tr => {
+        const cells = Array.from(tr.querySelectorAll('th, td'))
+          .map(c => (c.innerText || '').trim().replace(/\s+/g, ' '))
+          .filter(Boolean);
+        if (cells.length) rows.push('| ' + cells.join(' | ') + ' |');
+      });
+      const pre = document.createElement('pre');
+      pre.textContent = rows.join('\n');
+      t.replaceWith(pre);
+    });
+
     // 1) Always drop raw style/script so injected CSS blobs (mermaid diagrams)
     //    never leak into the captured text.
     clone.querySelectorAll('style, script').forEach(el => el.remove());
