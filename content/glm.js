@@ -78,83 +78,86 @@
     ],
 
     getLatestResponse: function() {
-      // Aggregate the COMPLETE last reply for GLM / chatglm.cn / z.ai.
+      // Aggregate the COMPLETE reply for GLM / chatglm.cn / z.ai.
       //
-      // The previous implementation returned `blocks[blocks.length - 1].innerText`
-      // from a broad selector list. On GLM the real answer lives inside a single
-      // message container, while citation/reference links, footnotes and
-      // secondary bubbles also match those broad selectors — so "last block"
-      // frequently landed on a partial/secondary node, truncating or garbling
-      // the reply reported by 聚合.
+      // Two real-world traps on these sites (both reported via 聚合):
+      //   1. The answer is rendered across MULTIPLE message containers, so taking
+      //      only the "last" one truncates the reply.
+      //   2. A separate "引用 / references" sidebar (and inline citation anchors
+      //      like tencent.com / aliyun.com) leaks into a container's innerText.
       //
-      // Fix: scope to the LAST non-empty message/answer container, then join
-      // every content block inside it in document order. Citations that sit
-      // OUTSIDE the answer wrapper are no longer pulled in; thinking blocks are
-      // still stripped.
-      const containerCandidates = [
-        '[class*="message"]',
-        '[class*="chat-content"]',
-        '.markdown-body',
-        '.chat-top-section',
-        '[class*="answer"]',
-        '[class*="response"]'
-      ];
+      // Fix: collect EVERY answer container on the page, strip thinking blocks
+      // and reference/footer noise from each, and join them in document order.
+      // This yields the full reply instead of one stray trailing node.
 
-      // Prefer the LAST container of the MOST-specific selector that matched
-      // (not the global last node), so a stray trailing bubble/footer/citation
-      // wrapper matching the broad [class*="response"] selector can't override
-      // the real answer container.
-      let container = null;
-      for (const sel of containerCandidates) {
-        const matches = Array.from(document.querySelectorAll(sel))
-          .filter(el => (el.innerText || '').trim().length > 0);
-        if (matches.length > 0) {
-          container = matches[matches.length - 1];
-          break;
+      // Answer containers, in priority order. Broad selectors ([class*="response"])
+      // are listed last so a specific message/markdown container wins when both
+      // exist, but we still gather ALL matches (not just the last) to reassemble
+      // a split reply.
+      const containerSelectors = [
+        '.markdown-body',
+        '[class*="chat-content"]',
+        '[class*="message"]',
+        '.chat-top-section',
+        '.glms-operation-content',
+        '[class*="answer"]',
+        '[class*="response"]',
+        '[class*="bubble"]'
+      ];
+      // Broad selectors also match reaction bubbles ("+1") and tiny footers that
+      // are not answers; require a real answer length for those only.
+      const broadSelectors = new Set(['[class*="response"]', '[class*="bubble"]']);
+      const MIN_BROAD_LEN = 20;
+
+      const seen = new Set();
+      const parts = [];
+
+      for (const sel of containerSelectors) {
+        const nodes = Array.from(document.querySelectorAll(sel));
+        for (const node of nodes) {
+          // De-dupe: a .markdown-body inside a [class*="message"] would otherwise
+          // be captured twice.
+          if (seen.has(node)) continue;
+          seen.add(node);
+
+          const text = extractAnswerText(node).trim();
+          if (!text) continue;
+          if (broadSelectors.has(sel) && text.length < MIN_BROAD_LEN) continue;
+          parts.push(text);
         }
       }
-      if (!container) return null;
 
-      const contentSelectors = [
-        '.markdown-body',
-        '[class*="content"]',
-        '[class*="bubble"]',
-        '[class*="answer"]',
-        '[class*="response"]'
-      ];
-      const blocks = container.querySelectorAll(contentSelectors.join(','));
-      const parts = [];
-      if (blocks.length > 0) {
-        blocks.forEach(b => {
-          const t = filterThinkingContent(b).trim();
-          if (t && !parts.includes(t)) parts.push(t);
-        });
-      }
-      if (parts.length > 0) return parts.join('\n\n').trim();
-
-      return filterThinkingContent(container).trim();
+      if (parts.length === 0) return null;
+      return parts.join('\n\n').trim();
     }
   });
 
-  // Filter out GLM thinking/reasoning blocks from a response fragment
-  function filterThinkingContent(element) {
+  // Pull the clean answer text out of a single container: drop thinking blocks
+  // and reference/footer noise, then read innerText.
+  function extractAnswerText(element) {
     if (!element) return '';
-    // Clone to avoid modifying the live DOM
     const clone = element.cloneNode(true);
 
-    // Remove thinking blocks — they are usually in containers with:
-    // - class containing "think" or "thought" or "reasoning"
-    // - containers with overflow-hidden and max-height constraints (collapsed thinking)
-    const thinkingSelectors = [
+    // Reasoning / thinking blocks.
+    const noiseSelectors = [
       '[class*="think"]',
       '[class*="thought"]',
       '[class*="reasoning"]',
       '[class*="overflow-hidden"][class*="max-h"]',
       '[data-type="thinking"]',
-      '[data-type="reasoning"]'
+      '[data-type="reasoning"]',
+      // Reference / citation sidebars and footers that leak domain names
+      // (tencent.com, aliyun.com, ...) into innerText.
+      '[class*="reference"]',
+      '[class*="citation"]',
+      '[class*="quote"]',
+      '[class*="source"]',
+      '[class*="footnote"]',
+      '[class*="refer"]',
+      '[class*="引用"]',
+      '[class*="溯源"]'
     ];
-
-    for (const selector of thinkingSelectors) {
+    for (const selector of noiseSelectors) {
       clone.querySelectorAll(selector).forEach(el => el.remove());
     }
 

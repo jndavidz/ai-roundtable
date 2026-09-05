@@ -143,37 +143,48 @@ function runExtract(adapter, buildDoc) {
 function buildScenario({ withThinking = false } = {}) {
   const root = new FakeEl('div');
 
-  // ---- full assistant reply (multi-section) ----
-  const message = new FakeEl('div', ['message', 'assistant']);
-  const chatContent = new FakeEl('div', ['chat-content']);
-  const md = new FakeEl('div', ['markdown']);
-  md.innerText = [
+  // The REAL bug report shows the GLM answer is split across MULTIPLE message
+  // containers (a streamed / multi-block reply). Previously only the trailing
+  // container was captured, truncating the reply. So we model two message blocks.
+  function makeMessage(text) {
+    const message = new FakeEl('div', ['message', 'assistant']);
+    const chatContent = new FakeEl('div', ['chat-content']);
+    const md = new FakeEl('div', ['markdown']);
+    md.innerText = text;
+    chatContent.appendChild(md);
+    message.appendChild(chatContent);
+    return { message, md };
+  }
+
+  const m1 = makeMessage([
     '核心结论：推荐 A 与 B。',
     '',
     '一、按场景的快速推荐',
     '1. 场景 X → 方案 A',
-    '2. 场景 Y → 方案 B',
-    '',
+    '2. 场景 Y → 方案 B'
+  ].join('\n'));
+  root.appendChild(m1.message);
+
+  const m2 = makeMessage([
     '二、逐个插件深度分析',
     '插件 1 的细节……',
     '插件 2 的细节……'
-  ].join('\n');
+  ].join('\n'));
+  root.appendChild(m2.message);
 
-  // a content sub-block inside the message (as some sites nest)
+  // a nested content sub-block inside the first message (sites nest this way)
   const content = new FakeEl('div', ['content']);
   content.innerText = '补充说明：注意成本。';
-  md.appendChild(content);
-  chatContent.appendChild(md);
-  message.appendChild(chatContent);
-  root.appendChild(message);
+  m1.md.appendChild(content);
 
-  // ---- trailing noise that previously broke "last block" ----
-  // a citation/reference footer OUTSIDE the answer wrapper
-  const citations = new FakeEl('div', ['citations']);
-  citations.innerText = '参考：tencent.com aliyun.com github.com toutiao.com';
-  root.appendChild(citations);
+  // ---- noise that previously leaked into innerText ----
+  // A separate "引用 / references" sidebar whose anchors leak domain names.
+  // It must NOT appear in the aggregated reply.
+  const refs = new FakeEl('div', ['references', '引用']);
+  refs.innerText = 'tencent.com aliyun.com github.com toutiao.com';
+  root.appendChild(refs);
 
-  // a secondary/stale bubble that matches [class*="answer"]/[class*="response"]
+  // A stray secondary bubble that matches [class*="response"].
   const secondary = new FakeEl('div', ['response']);
   secondary.innerText = '+1';
   root.appendChild(secondary);
@@ -182,7 +193,7 @@ function buildScenario({ withThinking = false } = {}) {
     const think = new FakeEl('div', ['thinking']);
     think.attributes['data-type'] = 'thinking';
     think.innerText = '（这是思维链，不应出现在聚合结果里）';
-    md.appendChild(think);
+    m1.md.appendChild(think);
   }
 
   return makeDoc(root);

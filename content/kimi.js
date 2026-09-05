@@ -57,61 +57,74 @@
       '[class*="stop-generating"]'
     ],
 
-    // Aggregate the COMPLETE last reply.
+    // Aggregate the COMPLETE reply.
     //
     // The default base extractor returns `blocks[blocks.length - 1].innerText`,
     // i.e. the LAST DOM node matching any response selector. On Kimi the answer
-    // spans a single message container whose descendants (markdown body, the
-    // citation/reference footer, secondary bubbles) each match the broad
-    // selectors above, so "last block" can land on a partial/secondary node and
-    // truncate the reply — exactly the behavior reported when using 聚合.
+    // can span MULTIPLE message containers (a split/streamed reply) and its
+    // descendants (markdown body, citation footers, secondary bubbles) all match
+    // the broad selectors above — so "last block" lands on a partial node and
+    // truncates the reply, exactly the behavior reported via 聚合.
     //
-    // Fix: locate the real last message/answer container, then concatenate EVERY
-    // content block inside it in document order. This yields the full multi-
-    // section reply instead of a stray trailing node.
+    // Fix: gather EVERY answer container on the page, strip reference/footer
+    // noise from each, and join them in document order. This reassembles the full
+    // reply instead of grabbing one stray trailing node.
     getLatestResponse: function () {
-      const containerCandidates = [
-        '[class*="message"]',
+      const containerSelectors = [
+        '[class*="markdown"]',
         '[class*="chat-content"]',
+        '[class*="message"]',
         '[class*="answer"]',
-        '[class*="response"]'
+        '[class*="response"]',
+        '[class*="bubble"]'
       ];
+      // Broad selectors also match reaction bubbles ("+1") and tiny footers that
+      // are not answers; require a real answer length for those only.
+      const broadSelectors = new Set(['[class*="response"]', '[class*="bubble"]']);
+      const MIN_BROAD_LEN = 20;
 
-      // Prefer the LAST container of the MOST-specific selector that matched
-      // (not the global last node). Broad selectors like [class*="response"]
-      // can match stray trailing bubbles, footers or citation wrappers, so a
-      // message/chat-content container must win when both exist.
-      let container = null;
-      for (const sel of containerCandidates) {
-        const matches = Array.from(document.querySelectorAll(sel))
-          .filter(el => (el.innerText || '').trim().length > 0);
-        if (matches.length > 0) {
-          container = matches[matches.length - 1];
-          break;
+      const seen = new Set();
+      const parts = [];
+
+      for (const sel of containerSelectors) {
+        const nodes = Array.from(document.querySelectorAll(sel));
+        for (const node of nodes) {
+          // De-dupe: a markdown body inside a [class*="message"] would otherwise
+          // be captured twice.
+          if (seen.has(node)) continue;
+          seen.add(node);
+
+          const text = extractAnswerText(node).trim();
+          if (!text) continue;
+          if (broadSelectors.has(sel) && text.length < MIN_BROAD_LEN) continue;
+          parts.push(text);
         }
       }
-      if (!container) return null;
 
-      // Collect all content blocks within the container, in document order.
-      const contentSelectors = [
-        '[class*="markdown"]',
-        '[class*="content"]',
-        '[class*="bubble"]',
-        '[class*="answer"]',
-        '[class*="response"]'
-      ];
-      const blocks = container.querySelectorAll(contentSelectors.join(','));
-      const parts = [];
-      if (blocks.length > 0) {
-        blocks.forEach(b => {
-          const t = (b.innerText || '').trim();
-          if (t && !parts.includes(t)) parts.push(t);
-        });
-      }
-      if (parts.length > 0) return parts.join('\n\n').trim();
-
-      // Fallback: whole container text (still the full reply, not a stray child).
-      return (container.innerText || '').trim();
+      if (parts.length === 0) return null;
+      return parts.join('\n\n').trim();
     }
   });
+
+  // Pull clean answer text from one container: drop reference/footer noise
+  // (citation sidebars whose anchors leak domain names like tencent.com /
+  // aliyun.com) then read innerText.
+  function extractAnswerText(element) {
+    if (!element) return '';
+    const clone = element.cloneNode(true);
+    const noiseSelectors = [
+      '[class*="reference"]',
+      '[class*="citation"]',
+      '[class*="quote"]',
+      '[class*="source"]',
+      '[class*="footnote"]',
+      '[class*="refer"]',
+      '[class*="引用"]',
+      '[class*="溯源"]'
+    ];
+    for (const selector of noiseSelectors) {
+      clone.querySelectorAll(selector).forEach(el => el.remove());
+    }
+    return clone.innerText || '';
+  }
 })();
