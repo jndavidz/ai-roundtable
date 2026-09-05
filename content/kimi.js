@@ -69,71 +69,35 @@
     // Fix: gather EVERY answer container on the page, strip reference/footer
     // noise from each, and join them in document order. This reassembles the full
     // reply instead of grabbing one stray trailing node.
+    // CDP 实测(kimi.com, 2026-09): 真实结构为
+    //   .chat-content-list > .chat-content-item.chat-content-item-assistant
+    //     > .markdown-container > .markdown (+ .table.markdown-table)
+    // 之前按「收集所有匹配容器」拼接，会同时抓到会话容器、用户消息容器、
+    // 助手容器与 markdown 容器并按层级重复拼接(实测 16818 字，且混入用户
+    // 提问与「高峰时段算力不足…升级会员」推广)。
+    // 修正: 只取最后一条「助手消息容器」，表格/代码块都在它内部，天然完整。
     getLatestResponse: function () {
+      // 助手消息容器优先(语义精确)，越靠前优先级越高
       const containerSelectors = [
+        '.chat-content-item-assistant',
+        '[class*="item-assistant"]',
+        '[class*="assistant"]',
+        '.markdown-container',
         '[class*="markdown"]',
-        '[class*="chat-content"]',
-        '[class*="message"]',
-        '[class*="answer"]',
-        '[class*="response"]',
-        '[class*="bubble"]'
+        '.chat-content-item',
+        '[class*="chat-content"]'
       ];
-      // Leaf selectors: a container wrapping one of these is an ANCESTOR and must
-      // be skipped, otherwise its innerText repeats the leaf's text (and any
-      // diagram) — causing the reply to be pasted multiple times.
-      const leafSelectors = [
-        '[class*="markdown"]',
-        '[class*="content"]'
-      ];
-      // Broad selectors also match reaction bubbles ("+1") and tiny footers that
-      // are not answers; require a real answer length for those only.
-      const broadSelectors = new Set(['[class*="response"]', '[class*="bubble"]']);
-      const MIN_BROAD_LEN = 20;
-
-      const seen = new Set();
-      const parts = [];
-
-      // Strong thinking signatures. A container whose cleaned text STILL matches
-      // one (e.g. a big ancestor wrapper around the thinking block) is dropped
-      // so it can't re-inject the thinking text; the clean body is captured via
-      // its narrower descendant containers instead.
-      const THINKING_SIGNATURE = /Hmm[,，]|用户想|深度思考|已深度思考|thinking block/i;
 
       for (const sel of containerSelectors) {
-        const nodes = Array.from(document.querySelectorAll(sel));
-        for (const node of nodes) {
-          // De-dupe: a markdown body inside a [class*="message"] would otherwise
-          // be captured twice.
-          if (seen.has(node)) continue;
-          seen.add(node);
-
-          // Skip ANCESTOR containers that wrap a more-specific leaf we capture
-          // separately — their innerText would just repeat that leaf's content.
-          const wrapsLeaf = leafSelectors.some(ls =>
-            ls !== sel && node.querySelector(ls));
-          if (wrapsLeaf) continue;
-
-          const text = extractAnswerText(node).trim();
-          if (!text) continue;
-          if (broadSelectors.has(sel) && text.length < MIN_BROAD_LEN) continue;
-          if (THINKING_SIGNATURE.test(text)) continue; // dropped: thinking leaked in
-          parts.push(text);
-        }
+        const nodes = Array.from(document.querySelectorAll(sel))
+          .filter(el => (el.innerText || '').trim().length > 0);
+        if (nodes.length === 0) continue;
+        // 取最后一条(最新回复)
+        const node = nodes[nodes.length - 1];
+        const text = extractAnswerText(node).trim();
+        if (text) return text;
       }
-
-      if (parts.length === 0) return null;
-
-      // De-duplicate: drop any part whose normalized text is fully contained in
-      // another part (residual ancestor overlap or mermaid preview labels).
-      const norm = s => s.replace(/\s+/g, '');
-      const kept = [];
-      for (const p of parts) {
-        const pn = norm(p);
-        const absorbed = parts.some(q => q !== p && norm(q).includes(pn) && norm(q).length > pn.length);
-        if (!absorbed) kept.push(p);
-      }
-
-      return kept.join('\n\n').trim();
+      return null;
     }
   });
 
@@ -184,7 +148,21 @@
       '[data-type*="reason"]',
       // Rendered mermaid preview duplicates the diagram source in the code block;
       // drop the preview so only the flowchart source text is kept.
-      '[class*="mermaid"]'
+      '[class*="mermaid"]',
+      // CDP 实测(kimi.com 2026-09)噪声：
+      // - 工具调用「摘要」(.toolcall-rollup__part / .toolcall-flow*)
+      //   「使用 3 个工具…搜索网页(40 个结果)」不是最终答复，须剥离
+      //   注意：正文在 .toolcall-rollup__tail > .markdown-container 里，
+      //   因此不能整体删 [class*="toolcall"]，只删 summary 部分
+      // - .upgrade-membership「高峰时段算力不足…升级会员畅用思考模型」推广
+      '.toolcall-rollup__part',
+      '[class*="toolcall-flow"]',
+      '.upgrade-membership',
+      '[class*="upgrade-membership"]',
+      // CDP 实测: .segment-assistant-actions 是回复下方的操作按钮区
+      // (「引用 / 复制 / 重新生成」等), 不是答复内容
+      '.segment-assistant-actions',
+      '[class*="segment-assistant-actions"]'
     ];
     for (const selector of noiseSelectors) {
       clone.querySelectorAll(selector).forEach(el => el.remove());

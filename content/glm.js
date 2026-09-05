@@ -90,81 +90,38 @@
       // and reference/footer noise from each, and join them in document order.
       // This yields the full reply instead of one stray trailing node.
 
-      // Answer containers, most-specific first. We do NOT blindly join every
-      // match: the real rendered text lives in the LEAF containers (.markdown-body
-      // / answer-content-wrap). Their ANCESTORS (.answer, [class*="message"]…)
-      // merely wrap them, so capturing both duplicates the whole reply (and the
-      // mermaid diagram twice). We therefore skip any container that itself
-      // contains a more-specific descendant we will capture on its own.
-      const containerSelectors = [
-        '.markdown-body',
-        '[class*="chat-content"]',
-        '[class*="message"]',
-        '.chat-top-section',
-        '.glms-operation-content',
-        '[class*="answer"]',
-        '[class*="response"]',
-        '[class*="bubble"]'
+      // CDP 实测(chatglm.cn, 2026-09): 真实结构为
+      //   .answer > .answer-content-wrap.text-advance-thinking-content (思考,须剥离)
+      //   .answer > .answer-content-wrap (正文, 内含多个 .markdown-body 段落)
+      // 之前按「保留未被包含的最大块」会抓到 .answer(含头部「旧时光旅客/分享链接
+      // 下载名片」推广块)与尾部「20个来源/以上内容为 AI 生成…NaN/」页脚(实测 7250)。
+      // 修正: 优先取正文容器 .answer-content-wrap(非 thinking 的那个)，
+      //       其次取所有 .markdown-body 段落拼接，两者都天然不含推广与页脚。
+      const bodyContainerSelectors = [
+        '.answer-content-wrap:not(.text-advance-thinking-content)',
+        '[class*="answer-content-wrap"]:not([class*="thinking"])'
       ];
-      // Selectors considered "specific rendered text" — a container that wraps one
-      // of these is an ancestor and must be skipped to avoid duplication.
-      const leafSelectors = [
-        '.markdown-body',
-        '.answer-content-wrap',
-        '.glms-operation-content',
-        '[class*="content"]'
-      ];
-      // Broad selectors also match reaction bubbles ("+1") and tiny footers that
-      // are not answers; require a real answer length for those only.
-      const broadSelectors = new Set(['[class*="response"]', '[class*="bubble"]']);
-      const MIN_BROAD_LEN = 20;
 
-      const seen = new Set();
+      for (const sel of bodyContainerSelectors) {
+        const nodes = Array.from(document.querySelectorAll(sel))
+          .filter(el => (el.innerText || '').trim().length > 0);
+        if (nodes.length === 0) continue;
+        const node = nodes[nodes.length - 1];
+        const text = extractAnswerText(node).trim();
+        if (text) return text;
+      }
+
+      // 回退: 拼接全部正文段落(.markdown-body)，跳过思考块
       const parts = [];
-
-      // Strong thinking signatures. A container whose cleaned text STILL matches
-      // one (e.g. a big ancestor .answer that wraps the thinking block and whose
-      // descendant-strip didn't fully clear it) is dropped so it can't re-inject
-      // the thinking text. The clean answer body is captured via its narrower
-      // descendant containers (answer-content-wrap / markdown-body) instead.
-      const THINKING_SIGNATURE = /Hmm[,，]|用户想|深度思考|已深度思考|thinking block/i;
-
-      for (const sel of containerSelectors) {
-        const nodes = Array.from(document.querySelectorAll(sel));
-        for (const node of nodes) {
-          if (seen.has(node)) continue;
-          seen.add(node);
-
-          // Skip ANCESTOR containers: if this node contains a more-specific leaf
-          // container we capture separately, its own innerText would just repeat
-          // that leaf's text (and the mermaid diagram) — causing duplication.
-          const wrapsLeaf = leafSelectors.some(ls =>
-            ls !== sel && node.querySelector(ls));
-          if (wrapsLeaf) continue;
-
-          const text = extractAnswerText(node).trim();
-          if (!text) continue;
-          if (broadSelectors.has(sel) && text.length < MIN_BROAD_LEN) continue;
-          if (THINKING_SIGNATURE.test(text)) continue; // dropped: thinking leaked in
-          parts.push(text);
-        }
+      const seen = new Set();
+      for (const node of document.querySelectorAll('.markdown-body')) {
+        if (seen.has(node)) continue;
+        seen.add(node);
+        const text = extractAnswerText(node).trim();
+        if (text) parts.push(text);
       }
-
-      if (parts.length === 0) return null;
-
-      // De-duplicate: drop any part whose normalized text is fully contained in
-      // another part. This catches residual overlaps (e.g. an ancestor that
-      // slipped through, or a mermaid preview whose labels are a reshuffle of the
-      // flowchart source) so the reply isn't pasted multiple times.
-      const norm = s => s.replace(/\s+/g, '');
-      const kept = [];
-      for (const p of parts) {
-        const pn = norm(p);
-        const absorbed = parts.some(q => q !== p && norm(q).includes(pn) && norm(q).length > pn.length);
-        if (!absorbed) kept.push(p);
-      }
-
-      return kept.join('\n\n').trim();
+      if (parts.length > 0) return parts.join('\n\n').trim();
+      return null;
     }
   });
 

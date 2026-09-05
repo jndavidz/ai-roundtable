@@ -150,31 +150,70 @@ function runExtract(adapter, buildDoc) {
 
 // ---- shared DOM factory: full reply + trailing noise ------------------------
 
-function buildScenario({ withThinking = false } = {}) {
+// ---- kimi fixture: CDP 实测真实结构 (kimi.com 2026-09) ---------------------
+function buildKimi() {
   const root = new FakeEl('div');
+  // 会话列表里含用户消息与助手消息; 只应取助手消息
+  const list = new FakeEl('div', ['chat-content-list']);
 
-  // Mirror the REAL chatglm.cn page (observed 2026): the answer is rendered as
-  // SEVERAL .markdown-body section blocks, all wrapped by an ancestor .answer
-  // (which would duplicate everything if captured), plus a thinking block,
-  // a mermaid diagram rendered BOTH as source (in <pre>) and as a preview div,
-  // and a footer. This exercises the de-duplication fixes.
-  function makeSection(text) {
-    const md = new FakeEl('div', ['markdown-body']);
-    md.innerText = text;
-    return md;
-  }
+  const userItem = new FakeEl('div', ['chat-content-item', 'chat-content-item-user']);
+  userItem.innerText = '请联网搜索最佳实践和最新信息，推荐用于deepseek harness的搜索插件。';
+  list.appendChild(userItem);
 
-  // Ancestor wrapper that contains all the leaf sections (must be SKIPPED).
+  const assistant = new FakeEl('div', ['chat-content-item', 'chat-content-item-assistant']);
+
+  // 工具调用: 摘要部分(应剥离) + tail 里的正文(应保留)
+  const rollup = new FakeEl('div', ['toolcall-rollup']);
+  const summary = new FakeEl('div', ['toolcall-rollup__part', 'toolcall-flow']);
+  summary.innerText = '使用 3 个工具，Select Representative S-Level GitHub Repositories';
+  rollup.appendChild(summary);
+
+  const tail = new FakeEl('div', ['toolcall-rollup__tail']);
+  const mdContainer = new FakeEl('div', ['markdown-container']);
+  const md = new FakeEl('div', ['markdown']);
+  md.innerText = ['基于对最新插件的调研，推荐如下：',
+                  '🏆 核心推荐插件概览',
+                  'ModSearch 功能全面、免费起步 github.com',
+                  'dsh plugin --profile web add @liustack/modsearch'].join('\n');
+  mdContainer.appendChild(md);
+  tail.appendChild(mdContainer);
+  rollup.appendChild(tail);
+  assistant.appendChild(rollup);
+
+  // 噪声: 升级会员推广 + 底部操作区(「引用」)
+  const promo = new FakeEl('div', ['upgrade-membership']);
+  promo.innerText = '高峰时段算力不足，已切换至 K2.6 快速，升级会员畅用思考模型';
+  assistant.appendChild(promo);
+
+  const actions = new FakeEl('div', ['segment-assistant-actions']);
+  actions.innerText = '引用';
+  assistant.appendChild(actions);
+
+  list.appendChild(assistant);
+  root.appendChild(list);
+  return makeDoc(root);
+}
+
+// ---- glm fixture: CDP 实测真实结构 (chatglm.cn 2026-09) --------------------
+function buildGlm({ withThinking = false } = {}) {
+  const root = new FakeEl('div');
   const answer = new FakeEl('div', ['answer']);
 
-  const s1 = makeSection([
-    '基于对最新社区插件和最佳实践的调研，为 DSH 选择搜索插件……',
-    '🏆 核心推荐插件概览',
-    '<details> 安装与快速配置：dsh plugin --profile web add @liustack/modsearch </details>'
-  ].join('\n'));
-  answer.appendChild(s1);
+  if (withThinking) {
+    const think = new FakeEl('div', ['answer-content-wrap', 'text-advance-thinking-content']);
+    think.innerText = ['Hmm, 用户想为 DeepSeek Harness 找搜索插件……',
+                       'tencent.com 以及是否需要 API key 这些实际问题。',
+                       'aliyun.com +1'].join('\n');
+    answer.appendChild(think);
+  }
 
-  // ---- comparison TABLE: must be converted to readable pipe rows, not flattened ----
+  // 正文容器: 非 thinking 的 answer-content-wrap, 内含多个 .markdown-body 段落
+  const body = new FakeEl('div', ['answer-content-wrap']);
+  const s1 = new FakeEl('div', ['markdown-body']);
+  s1.innerText = ['基于对最新社区插件和最佳实践的调研，为 DSH 选择搜索插件……',
+                  '🏆 核心推荐插件概览'].join('\n');
+
+  // 对比表格: 必须转成管道行, 不能被 innerText 压成一行
   const table = new FakeEl('table');
   [['插件名称', '核心定位', '引擎支持'],
    ['ModSearch', '功能全面、免费起步', 'Firecrawl, Tavily, Exa'],
@@ -188,49 +227,32 @@ function buildScenario({ withThinking = false } = {}) {
     table.appendChild(tr);
   });
   s1.appendChild(table);
-  s1.innerText += '\nModSearch @liustack/modsearch 功能全面、免费起步 github.com';
+  body.appendChild(s1);
 
-  const s2 = makeSection([
-    '✅ 总结 对于绝大多数用户，ModSearch 是最佳起点。',
-    '想零成本体验语义搜索，选 dsh-web-search-exa 作为备胎。'
-  ].join('\n'));
-  answer.appendChild(s2);
+  const s2 = new FakeEl('div', ['markdown-body']);
+  s2.innerText = ['✅ 总结 对于绝大多数用户，ModSearch 是最佳起点。',
+                  '想零成本体验语义搜索，选 dsh-web-search-exa 作为备胎。'].join('\n');
 
-  // ---- thinking block (REAL class "text-advance-thinking-content") nested in .answer ----
-  if (withThinking) {
-    const think = new FakeEl('div', ['answer-content-wrap', 'text-advance-thinking-content']);
-    const md = new FakeEl('div', ['markdown-body', 'dr_margin_botttom', 'md-body', 'tl']);
-    md.innerText = [
-      'Hmm, 用户想为 DeepSeek Harness 找搜索插件……',
-      'tencent.com 以及是否需要 API key 这些实际问题。',
-      'aliyun.com +1'
-    ].join('\n');
-    think.appendChild(md);
-    answer.appendChild(think);
-  }
-
-  // ---- mermaid diagram lives INSIDE a .markdown-body (as on the real page):
-  //      SOURCE in <pre> (keep) + rendered PREVIEW div (drop) ----
+  // mermaid: <pre> 源码(保留) + 渲染预览 div(剥离)
   const pre = new FakeEl('pre');
   pre.innerText = 'flowchart LR\n A[开始] --> B{需求?}\n B -- 免费 --> C[ModSearch]';
   s2.appendChild(pre);
-
   const preview = new FakeEl('div', ['mermaid']);
-  preview.innerText = '开始需求?免费ModSearch'; // flattened labels — must NOT appear
+  preview.innerText = '开始需求?免费ModSearch';
   s2.appendChild(preview);
 
-  // nested mermaid <style> blob — must NOT leak
   const style = new FakeEl('style');
   style.innerText = '#mmd-1788611910196-3{font-family:"PingFang SC";}@keyframes dash{to{stroke-dashoffset:0;}}';
-  s1.appendChild(style);
+  s2.appendChild(style);
+  body.appendChild(s2);
 
+  answer.appendChild(body);
   root.appendChild(answer);
 
-  // ---- footer: 来源 / 推荐问题 (separate container, should NOT match) ----
+  // 页脚噪声(独立容器, 不应被抓到)
   const footer = new FakeEl('div', ['sources-footer']);
-  footer.innerText = '20个来源 ModSearch如何配置Tavily和Exa的Key？ 和我聊聊天吧';
+  footer.innerText = '20个来源 以上内容为 AI 生成，不代表开发者立场 NaN/';
   root.appendChild(footer);
-
   return makeDoc(root);
 }
 
@@ -240,43 +262,32 @@ function count(hay, needle) { return hay.split(needle).length - 1; }
 // ---- tests ------------------------------------------------------------------
 
 (async () => {
-  // Kimi: full reply ONCE, thinking/mermaid-preview/style excluded, no dup.
+  // Kimi: 只取助手消息, 剥离工具摘要/推广/操作区, 保留正文
   {
-    const out = runExtract('content/kimi.js', () => buildScenario({ withThinking: true }));
-    assert(out.includes('核心推荐插件概览'), 'kimi: missing answer body (truncated)');
-    assert(out.includes('ModSearch'), 'kimi: missing ModSearch in reply');
-    assert(out.includes('dsh plugin'), 'kimi: missing <details> install command');
-    assert(count(out, '✅ 总结') === 1, 'kimi: reply duplicated (✅ 总结 x' + count(out, '✅ 总结') + ')');
-    assert(out.includes('flowchart LR'), 'kimi: missing mermaid SOURCE');
-    assert(!out.includes('开始需求?免费ModSearch'), 'kimi: mermaid PREVIEW labels leaked');
-    assert(!out.includes('Hmm, 用户想'), 'kimi: thinking block leaked into reply');
-    assert(!out.includes('#mmd-'), 'kimi: mermaid <style> CSS leaked into reply');
-    // Table must be readable pipe rows, NOT flattened into one run-on line.
-    assert(out.includes('| 插件名称 | 核心定位 | 引擎支持 |'), 'kimi: table header row missing');
-    assert(out.includes('| ModSearch | 功能全面、免费起步 | Firecrawl, Tavily, Exa |'), 'kimi: table data row missing');
+    const out = runExtract('content/kimi.js', buildKimi);
+    assert(out !== null, 'kimi: no content extracted');
+    assert(out.includes('核心推荐插件概览'), 'kimi: missing answer body');
+    assert(out.includes('dsh plugin --profile web add'), 'kimi: missing install command');
+    assert(!out.includes('使用 3 个工具'), 'kimi: tool-call summary leaked');
+    assert(!out.includes('高峰时段算力不足'), 'kimi: upgrade promo leaked');
+    assert(!out.includes('请联网搜索最佳实践'), 'kimi: user question leaked');
     console.log('kimi aggregation OK (len=' + out.length + ')');
   }
 
-  // GLM: same real-page shape — thinking + mermaid preview + style stripped,
-  // answer captured exactly ONCE (no ancestor/duplicate pasting).
+  // GLM: 取正文容器, 剥离 thinking/页脚/mermaid 预览, 表格转管道行
   {
-    const out = runExtract('content/glm.js', () => buildScenario({ withThinking: true }));
-    assert(out.includes('核心推荐插件概览'), 'glm: missing answer body (truncated)');
-    assert(out.includes('ModSearch'), 'glm: missing ModSearch in reply');
-    assert(out.includes('dsh plugin'), 'glm: missing <details> install command');
-    assert(count(out, '✅ 总结') === 1, 'glm: reply duplicated (✅ 总结 x' + count(out, '✅ 总结') + ')');
-    assert(out.includes('flowchart LR'), 'glm: missing mermaid SOURCE');
-    assert(!out.includes('开始需求?免费ModSearch'), 'glm: mermaid PREVIEW labels leaked');
-    assert(!out.includes('Hmm, 用户想'), 'glm: think-block leaked into reply');
-    assert(!out.includes('#mmd-'), 'glm: mermaid <style> CSS leaked into reply');
-    // The leaked domains lived INSIDE the thinking block, so stripping thinking
-    // removes them. (github.com in the answer itself is kept on purpose.)
-    assert(!out.includes('tencent.com'), 'glm: thinking-domain tencent.com leaked');
-    assert(!out.includes('aliyun.com'), 'glm: thinking-domain aliyun.com leaked');
-    assert(!out.includes('20个来源'), 'glm: footer/sources section leaked in');
+    const out = runExtract('content/glm.js', () => buildGlm({ withThinking: true }));
+    assert(out !== null, 'glm: no content extracted');
+    assert(out.includes('核心推荐插件概览'), 'glm: missing answer body');
     assert(out.includes('| 插件名称 | 核心定位 | 引擎支持 |'), 'glm: table header row missing');
     assert(out.includes('| ModSearch | 功能全面、免费起步 | Firecrawl, Tavily, Exa |'), 'glm: table data row missing');
-    console.log('glm aggregation OK (len=' + out.length + ', thinking stripped)');
+    assert(out.includes('flowchart LR'), 'glm: missing mermaid source');
+    assert(!out.includes('开始需求?免费ModSearch'), 'glm: mermaid preview labels leaked');
+    assert(!out.includes('Hmm, 用户想'), 'glm: thinking leaked');
+    assert(!out.includes('tencent.com'), 'glm: thinking-domain tencent.com leaked');
+    assert(!out.includes('20个来源'), 'glm: footer leaked');
+    assert(!out.includes('#mmd-'), 'glm: mermaid <style> leaked');
+    console.log('glm aggregation OK (len=' + out.length + ')');
   }
 
   console.log('kimi/glm aggregation tests passed');
