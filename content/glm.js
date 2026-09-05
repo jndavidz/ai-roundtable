@@ -78,37 +78,68 @@
     ],
 
     getLatestResponse: function() {
-      // Try multiple selectors for GLM's response containers
-      // GLM uses various containers for markdown-rendered responses
-      const selectors = [
-        '.markdown-body',
+      // Aggregate the COMPLETE last reply for GLM / chatglm.cn / z.ai.
+      //
+      // The previous implementation returned `blocks[blocks.length - 1].innerText`
+      // from a broad selector list. On GLM the real answer lives inside a single
+      // message container, while citation/reference links, footnotes and
+      // secondary bubbles also match those broad selectors — so "last block"
+      // frequently landed on a partial/secondary node, truncating or garbling
+      // the reply reported by 聚合.
+      //
+      // Fix: scope to the LAST non-empty message/answer container, then join
+      // every content block inside it in document order. Citations that sit
+      // OUTSIDE the answer wrapper are no longer pulled in; thinking blocks are
+      // still stripped.
+      const containerCandidates = [
+        '[class*="message"]',
         '[class*="chat-content"]',
-        '[class*="answer"] [class*="content"]',
-        '[class*="response"] [class*="content"]',
-        '[class*="bubble"] [class*="content"]',
-        '[class*="message"] [class*="content"]',
-        '.detail-container [class*="content"]'
+        '.markdown-body',
+        '.chat-top-section',
+        '[class*="answer"]',
+        '[class*="response"]'
       ];
 
-      let blocks = [];
-      for (const selector of selectors) {
-        blocks = document.querySelectorAll(selector);
-        if (blocks.length > 0) break;
+      // Prefer the LAST container of the MOST-specific selector that matched
+      // (not the global last node), so a stray trailing bubble/footer/citation
+      // wrapper matching the broad [class*="response"] selector can't override
+      // the real answer container.
+      let container = null;
+      for (const sel of containerCandidates) {
+        const matches = Array.from(document.querySelectorAll(sel))
+          .filter(el => (el.innerText || '').trim().length > 0);
+        if (matches.length > 0) {
+          container = matches[matches.length - 1];
+          break;
+        }
       }
+      if (!container) return null;
 
-      if (blocks.length === 0) return null;
+      const contentSelectors = [
+        '.markdown-body',
+        '[class*="content"]',
+        '[class*="bubble"]',
+        '[class*="answer"]',
+        '[class*="response"]'
+      ];
+      const blocks = container.querySelectorAll(contentSelectors.join(','));
+      const parts = [];
+      if (blocks.length > 0) {
+        blocks.forEach(b => {
+          const t = filterThinkingContent(b).trim();
+          if (t && !parts.includes(t)) parts.push(t);
+        });
+      }
+      if (parts.length > 0) return parts.join('\n\n').trim();
 
-      const lastBlock = blocks[blocks.length - 1];
-
-      // Filter out thinking blocks (GLM-5.2 thinking mode)
-      // Thinking blocks are typically in collapsible containers with specific classes
-      return filterThinkingContent(lastBlock).trim();
+      return filterThinkingContent(container).trim();
     }
   });
 
-  // Filter out GLM thinking/reasoning blocks from the response
+  // Filter out GLM thinking/reasoning blocks from a response fragment
   function filterThinkingContent(element) {
-    // Clone to avoid modifying the DOM
+    if (!element) return '';
+    // Clone to avoid modifying the live DOM
     const clone = element.cloneNode(true);
 
     // Remove thinking blocks — they are usually in containers with:
@@ -127,6 +158,6 @@
       clone.querySelectorAll(selector).forEach(el => el.remove());
     }
 
-    return clone.innerText;
+    return clone.innerText || '';
   }
 })();

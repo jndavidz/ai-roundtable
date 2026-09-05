@@ -55,8 +55,63 @@
       '[aria-label*="停止"]',
       '[aria-label*="Stop"]',
       '[class*="stop-generating"]'
-    ]
+    ],
 
-    // getLatestResponse omitted — base.js derives it from responseSelectors.
+    // Aggregate the COMPLETE last reply.
+    //
+    // The default base extractor returns `blocks[blocks.length - 1].innerText`,
+    // i.e. the LAST DOM node matching any response selector. On Kimi the answer
+    // spans a single message container whose descendants (markdown body, the
+    // citation/reference footer, secondary bubbles) each match the broad
+    // selectors above, so "last block" can land on a partial/secondary node and
+    // truncate the reply — exactly the behavior reported when using 聚合.
+    //
+    // Fix: locate the real last message/answer container, then concatenate EVERY
+    // content block inside it in document order. This yields the full multi-
+    // section reply instead of a stray trailing node.
+    getLatestResponse: function () {
+      const containerCandidates = [
+        '[class*="message"]',
+        '[class*="chat-content"]',
+        '[class*="answer"]',
+        '[class*="response"]'
+      ];
+
+      // Prefer the LAST container of the MOST-specific selector that matched
+      // (not the global last node). Broad selectors like [class*="response"]
+      // can match stray trailing bubbles, footers or citation wrappers, so a
+      // message/chat-content container must win when both exist.
+      let container = null;
+      for (const sel of containerCandidates) {
+        const matches = Array.from(document.querySelectorAll(sel))
+          .filter(el => (el.innerText || '').trim().length > 0);
+        if (matches.length > 0) {
+          container = matches[matches.length - 1];
+          break;
+        }
+      }
+      if (!container) return null;
+
+      // Collect all content blocks within the container, in document order.
+      const contentSelectors = [
+        '[class*="markdown"]',
+        '[class*="content"]',
+        '[class*="bubble"]',
+        '[class*="answer"]',
+        '[class*="response"]'
+      ];
+      const blocks = container.querySelectorAll(contentSelectors.join(','));
+      const parts = [];
+      if (blocks.length > 0) {
+        blocks.forEach(b => {
+          const t = (b.innerText || '').trim();
+          if (t && !parts.includes(t)) parts.push(t);
+        });
+      }
+      if (parts.length > 0) return parts.join('\n\n').trim();
+
+      // Fallback: whole container text (still the full reply, not a stray child).
+      return (container.innerText || '').trim();
+    }
   });
 })();
