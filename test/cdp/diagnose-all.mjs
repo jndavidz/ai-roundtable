@@ -5,6 +5,22 @@
 // 运行: D:\PortableApps\_sys\node\node.exe <this>  (Windows 侧, 读 127.0.0.1:9223)
 import { pathToFileURL } from "node:url";
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+
+// 加载真实 content script 源码(测的就是线上要跑的代码, 避免逻辑漂移)
+const CONTENT_DIR = "D:/repos/ai-roundtable/content";
+const readContent = (f) => fs.readFileSync(path.join(CONTENT_DIR, f), "utf8");
+const SITE_FILE = {
+  'chatglm.cn': 'glm.js',
+  'kimi.com': 'kimi.js',
+  'chat.deepseek.com': 'deepseek.js',
+  'chatgpt.com': 'chatgpt.js',
+  'claude.ai': 'claude.js',
+  'gemini.google.com': 'gemini.js',
+  'grok.com': 'grok.js',
+  'qianwen.com': 'qianwen.js'
+};
 
 const PORT = 9223;
 
@@ -20,132 +36,68 @@ function getJSON(pathname) {
 
 const { cdp } = await import(pathToFileURL("D:/repos/aurora/scripts/cdp/cdp-helper.mjs").href);
 
-// 与 content/glm.js 对齐的诊断逻辑（表格转管道行 / thinking 剥离 / 祖先跳过 / 子串去重）
-const FN = `
-(function () {
-  const host = location.hostname || '';
-  const site = host.replace(/^www\\./, '');
-  const SITES = {
-    'chatglm.cn': [
-      '.markdown-body', '[class*="chat-content"]', '[class*="message"]', '.chat-top-section',
-      '.glms-operation-content', '[class*="answer"]', '[class*="response"]', '[class*="bubble"]'
-    ],
-    'kimi.com': [
-      '[class*="markdown"]', '[class*="chat-content"]', '[class*="message"]',
-      '[class*="answer"]', '[class*="response"]', '[class*="bubble"]'
-    ],
-    'claude.ai': [
-      '[data-message-author-role="assistant"]', '[data-test-render-count]', '.font-claude-message', '[class*="assistant"]'
-    ],
-    'chatgpt.com': [
-      '[data-message-author-role="assistant"]', '[data-testid*="conversation-turn"]:has([data-message-author-role="assistant"])', '.agent-turn', '[class*="assistant"]'
-    ],
-    'gemini.google.com': [
-      'message-content', '[class*="markdown"]', '[class*="response"]', 'model-response'
-    ],
-    'chat.deepseek.com': [
-      '.ds-markdown--block', '.ds-markdown', '.markdown-body', '[class*="message"] [class*="content"]'
-    ],
-    'grok.com': [
-      '[class*="markdown"]', '[class*="message"] [class*="content"]', '[class*="response"]', '[class*="bubble"]'
-    ],
-    'www.qianwen.com': [
-      '[class*="markdown"]', '[class*="answer"]', '[class*="response"]', '[class*="content"]'
-    ]
-  };
-  const sels = SITES[site];
-  if (!sels) return JSON.stringify({ site, error: 'no selectors for site' });
-
-  const isThinkingEl = (el) => {
-    if (!el) return false;
-    const cls = (el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className) || '';
-    if (/thinking|thought|reasoning|深度思考/.test(cls)) return true;
-    let p = el.parentElement;
-    while (p) {
-      const pc = (p.className && p.className.baseVal !== undefined ? p.className.baseVal : p.className) || '';
-      if (/thinking|thought|reasoning|深度思考/.test(pc)) return true;
-      p = p.parentElement;
+// 在页面内装配真实 content script: 提供 boot/base64ToFiles 桩, 捕获 createController
+// 传入的 config, 然后调用 config.getLatestResponse(), 并报告命中情况。
+function buildExpr(site) {
+  const file = SITE_FILE[site];
+  if (!file) return null;
+  const src = readContent(file);
+  // 页面内包装: 伪造 AIPanelBase 以捕获 config
+  return `(function () {
+    var SRC = ${JSON.stringify(src)};
+    var captured = null;
+    window.AIPanelBase = {
+      boot: function () { return true; },
+      base64ToFiles: function () { return []; },
+      createController: function (cfg) { captured = cfg; },
+      isVisible: function () { return true; },
+      sleep: function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); },
+      _test: {}
+    };
+    try { (0, eval)(SRC); } catch (e) {
+      return JSON.stringify({ site: ${JSON.stringify(site)}, error: 'content script threw: ' + e.message });
     }
-    return false;
-  };
-
-  const noiseSelectors = [
-    'style', 'script',
-    '.text-advance-thinking-content',
-    '[class*="think"]', '[class*="thought"]', '[class*="reasoning"]', '[class*="thinking"]',
-    '[class*="analysis"]', '[class*="chain"]', '[class*="cot"]',
-    '[class*="overflow-hidden"][class*="max-h"]',
-    '[data-type*="think"]', '[data-type*="reason"]',
-    '[class*="mermaid"]'
-  ];
-
-  function extract(el) {
-    if (isThinkingEl(el)) return '';
-    const clone = el.cloneNode(true);
-    clone.querySelectorAll('table').forEach(t => {
-      const rows = [];
-      t.querySelectorAll('tr').forEach(tr => {
-        const cells = Array.from(tr.querySelectorAll('th, td'))
-          .map(c => (c.innerText || '').trim().replace(/\\s+/g, ' ')).filter(Boolean);
-        if (cells.length) rows.push('| ' + cells.join(' | ') + ' |');
-      });
-      const pre = document.createElement('pre');
-      pre.textContent = rows.join('\\n');
-      t.replaceWith(pre);
+    if (!captured) {
+      return JSON.stringify({ site: ${JSON.stringify(site)}, error: 'createController not called' });
+    }
+    // 未定义 getLatestResponse 的站点复用 base.js 的默认派生: 遍历 responseSelectors
+    // 取最后一个匹配块的 innerText
+    if (typeof captured.getLatestResponse !== 'function') {
+      captured.getLatestResponse = function () {
+        var sels = captured.responseSelectors || [];
+        for (var i = 0; i < sels.length; i++) {
+          var blocks = document.querySelectorAll(sels[i]);
+          if (blocks.length > 0) {
+            return (blocks[blocks.length - 1].innerText || '').trim();
+          }
+        }
+        return null;
+      };
+    }
+    var out = null;
+    try { out = captured.getLatestResponse(); } catch (e) {
+      return JSON.stringify({ site: ${JSON.stringify(site)}, error: 'getLatestResponse threw: ' + e.message });
+    }
+    var final = (out || '').trim();
+    return JSON.stringify({
+      site: ${JSON.stringify(site)},
+      finalLen: final.length,
+      head: final.slice(0, 180),
+      tail: final.slice(-140),
+      hasHmm: /Hmm/.test(final),
+      hasMmd: /#mmd-/.test(final),
+      hasUserEcho: /请联网搜索最佳实践/.test(final),
+      hasPromo: /(旧时光旅客|分享链接下载名片|高峰时段算力不足|升级会员)/.test(final),
+      hits: []
     });
-    noiseSelectors.forEach(s => clone.querySelectorAll(s).forEach(n => n.remove()));
-    clone.querySelectorAll('*').forEach(n => {
-      const t = (n.innerText || '').trim();
-      if (t === '思考' || t === '已深度思考' || t === '深度思考') n.remove();
-    });
-    return clone.innerText || '';
-  }
-
-  // 候选收集：thinking 特征直接丢弃
-  const seen = new Set();
-  const cands = [];
-  const hits = [];
-  for (const sel of sels) {
-    document.querySelectorAll(sel).forEach(node => {
-      if (seen.has(node)) return;
-      seen.add(node);
-      const leafSels = ['.markdown-body', '.answer-content-wrap', '[class*="content"]', '[class*="markdown"]'];
-      const wrapsLeaf = leafSels.some(ls => ls !== sel && node.querySelector(ls));
-      const cls = (node.className && node.className.baseVal !== undefined ? node.className.baseVal : node.className) || '';
-      const text = extract(node).trim();
-      const THINKING = /Hmm[,，]|用户想|深度思考|已深度思考|thinking block/i;
-      const dropped = !text || THINKING.test(text) ||
-        (text.length < 20 && /response|bubble/.test(sel));
-      hits.push({ sel: sel, cls: String(cls).slice(0, 55), wrapsLeaf: wrapsLeaf, rawLen: (node.innerText || '').length, cleanLen: text.length, dropped: dropped });
-      if (!dropped) cands.push({ text: text, wrapsLeaf: wrapsLeaf });
-    });
-  }
-
-  // 去重：只保留「未被其他候选包含」的最大块（去掉重复副本）
-  const norm = s => s.replace(/\\s+/g, '');
-  const kept = cands.filter(c => {
-    const cn = norm(c.text);
-    return !cands.some(o => o !== c && norm(o.text).length > cn.length && norm(o.text).includes(cn));
-  }).map(c => c.text);
-  const final = kept.join('\\n\\n').trim();
-  return JSON.stringify({
-    site: site,
-    finalLen: final.length,
-    head: final.slice(0, 150),
-    tail: final.slice(-120),
-    hasHmm: /Hmm/.test(final),
-    hasMmd: /#mmd-/.test(final),
-    hits: hits
-  });
-})();
-`;
+  })();`;
+}
 
 const AI_TABS = [
   'chatglm.cn', 'kimi.com', 'claude.ai', 'chatgpt.com',
   'gemini.google.com', 'chat.deepseek.com', 'grok.com', 'qianwen.com'
 ];
 
-// CLI: --site=<host> 只跑一个站; --all 打印全部命中
 const argv = process.argv.slice(2);
 const siteArg = (argv.find(a => a.startsWith('--site=')) || '').slice(7);
 const printAll = argv.includes('--all');
@@ -159,7 +111,8 @@ console.log('found AI tabs:', pages.length);
     const site = wanted.find(d => tab.url.includes(d));
     try {
       const c = await cdp(tab.webSocketDebuggerUrl);
-      const res = await c.cmd('Runtime.evaluate', { expression: FN, returnByValue: true, awaitPromise: false });
+      const expr = buildExpr(site);
+    const res = await c.cmd('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: false });
       const val = res.result?.result?.value ?? res.exceptionDetails?.text;
       let info;
       try { info = JSON.parse(val); } catch { info = { site, error: 'parse fail', raw: String(val).slice(0, 300) }; }
