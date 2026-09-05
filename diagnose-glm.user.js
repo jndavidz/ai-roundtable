@@ -28,7 +28,22 @@
     '[data-type*="think"]', '[data-type*="reason"]'
   ];
 
+  function isThinkingElement(el) {
+    if (!el) return false;
+    const cls = (el.className || '') + ' ' + (el.getAttribute && el.getAttribute('class') || '');
+    if (/thinking|thought|reasoning|深度思考/.test(cls)) return true;
+    let p = el.parentElement;
+    while (p) {
+      if (/thinking|thought|reasoning|深度思考/.test(p.className || '')) return true;
+      p = p.parentElement;
+    }
+    return false;
+  }
+
+  // Mirror content/glm.js's extractAnswerText EXACTLY: if the node itself is a
+  // thinking block, return '' (this is the fix that was missing before).
   function stripNoise(el) {
+    if (isThinkingElement(el)) return '';
     const c = el.cloneNode(true);
     noise.forEach(s => c.querySelectorAll(s).forEach(n => n.remove()));
     c.querySelectorAll('*').forEach(n => {
