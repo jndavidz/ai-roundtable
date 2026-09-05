@@ -86,6 +86,12 @@
       const seen = new Set();
       const parts = [];
 
+      // Strong thinking signatures. A container whose cleaned text STILL matches
+      // one (e.g. a big ancestor wrapper around the thinking block) is dropped
+      // so it can't re-inject the thinking text; the clean body is captured via
+      // its narrower descendant containers instead.
+      const THINKING_SIGNATURE = /Hmm[,，]|用户想|深度思考|已深度思考|thinking block/i;
+
       for (const sel of containerSelectors) {
         const nodes = Array.from(document.querySelectorAll(sel));
         for (const node of nodes) {
@@ -97,6 +103,7 @@
           const text = extractAnswerText(node).trim();
           if (!text) continue;
           if (broadSelectors.has(sel) && text.length < MIN_BROAD_LEN) continue;
+          if (THINKING_SIGNATURE.test(text)) continue; // dropped: thinking leaked in
           parts.push(text);
         }
       }

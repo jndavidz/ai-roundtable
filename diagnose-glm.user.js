@@ -55,6 +55,7 @@
 
   const seen = new Set();
   const parts = [];
+  const THINKING_SIGNATURE = /Hmm[,，]|用户想|深度思考|已深度思考|thinking block/i;
   console.log('[诊断] 站点 =', site, ' 容器选择器 =', sels.join(' | '));
   console.log('[诊断] thinking 命中数 =',
     document.querySelectorAll('.text-advance-thinking-content, [class*="thinking"], [class*="think"], [class*="reasoning"]').length);
@@ -69,12 +70,13 @@
       const isBroad = broad.has(sel);
       const dropped = isBroad && cleaned.length < 20;
       const selfThinking = /thinking|thought|reasoning|深度思考/.test(node.className || '');
+      const sigDrop = THINKING_SIGNATURE.test(cleaned);
       console.log(
         `[诊断] sel=${sel} cls="${node.className}" ` +
         `rawLen=${raw.length} cleanLen=${cleaned.length} ` +
-        `thinking=${isThinking} selfThinking=${selfThinking} style=${hasStyle} dropped=${dropped}`
+        `thinking=${isThinking} selfThinking=${selfThinking} style=${hasStyle} dropped=${dropped} sigDrop=${sigDrop}`
       );
-      if (cleaned && !dropped) parts.push(cleaned);
+      if (cleaned && !dropped && !sigDrop) parts.push(cleaned);
     });
   }
   const final = parts.join('\n\n').trim();
