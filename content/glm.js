@@ -90,10 +90,12 @@
       // and reference/footer noise from each, and join them in document order.
       // This yields the full reply instead of one stray trailing node.
 
-      // Answer containers, in priority order. Broad selectors ([class*="response"])
-      // are listed last so a specific message/markdown container wins when both
-      // exist, but we still gather ALL matches (not just the last) to reassemble
-      // a split reply.
+      // Answer containers, most-specific first. We do NOT blindly join every
+      // match: the real rendered text lives in the LEAF containers (.markdown-body
+      // / answer-content-wrap). Their ANCESTORS (.answer, [class*="message"]…)
+      // merely wrap them, so capturing both duplicates the whole reply (and the
+      // mermaid diagram twice). We therefore skip any container that itself
+      // contains a more-specific descendant we will capture on its own.
       const containerSelectors = [
         '.markdown-body',
         '[class*="chat-content"]',
@@ -103,6 +105,14 @@
         '[class*="answer"]',
         '[class*="response"]',
         '[class*="bubble"]'
+      ];
+      // Selectors considered "specific rendered text" — a container that wraps one
+      // of these is an ancestor and must be skipped to avoid duplication.
+      const leafSelectors = [
+        '.markdown-body',
+        '.answer-content-wrap',
+        '.glms-operation-content',
+        '[class*="content"]'
       ];
       // Broad selectors also match reaction bubbles ("+1") and tiny footers that
       // are not answers; require a real answer length for those only.
@@ -122,10 +132,15 @@
       for (const sel of containerSelectors) {
         const nodes = Array.from(document.querySelectorAll(sel));
         for (const node of nodes) {
-          // De-dupe: a .markdown-body inside a [class*="message"] would otherwise
-          // be captured twice.
           if (seen.has(node)) continue;
           seen.add(node);
+
+          // Skip ANCESTOR containers: if this node contains a more-specific leaf
+          // container we capture separately, its own innerText would just repeat
+          // that leaf's text (and the mermaid diagram) — causing duplication.
+          const wrapsLeaf = leafSelectors.some(ls =>
+            ls !== sel && node.querySelector(ls));
+          if (wrapsLeaf) continue;
 
           const text = extractAnswerText(node).trim();
           if (!text) continue;
@@ -136,7 +151,20 @@
       }
 
       if (parts.length === 0) return null;
-      return parts.join('\n\n').trim();
+
+      // De-duplicate: drop any part whose normalized text is fully contained in
+      // another part. This catches residual overlaps (e.g. an ancestor that
+      // slipped through, or a mermaid preview whose labels are a reshuffle of the
+      // flowchart source) so the reply isn't pasted multiple times.
+      const norm = s => s.replace(/\s+/g, '');
+      const kept = [];
+      for (const p of parts) {
+        const pn = norm(p);
+        const absorbed = parts.some(q => q !== p && norm(q).includes(pn) && norm(q).length > pn.length);
+        if (!absorbed) kept.push(p);
+      }
+
+      return kept.join('\n\n').trim();
     }
   });
 
@@ -174,7 +202,11 @@
       '[class*="cot"]',
       '[class*="overflow-hidden"][class*="max-h"]',
       '[data-type*="think"]',
-      '[data-type*="reason"]'
+      '[data-type*="reason"]',
+      // Rendered mermaid preview (a div with class "mermaid") duplicates the
+      // diagram source that lives in the <pre>/<code> block. Drop the preview so
+      // we keep only the flowchart source text, not the flattened node labels.
+      '[class*="mermaid"]'
     ];
     for (const selector of noiseSelectors) {
       clone.querySelectorAll(selector).forEach(el => el.remove());

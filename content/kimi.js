@@ -78,6 +78,13 @@
         '[class*="response"]',
         '[class*="bubble"]'
       ];
+      // Leaf selectors: a container wrapping one of these is an ANCESTOR and must
+      // be skipped, otherwise its innerText repeats the leaf's text (and any
+      // diagram) — causing the reply to be pasted multiple times.
+      const leafSelectors = [
+        '[class*="markdown"]',
+        '[class*="content"]'
+      ];
       // Broad selectors also match reaction bubbles ("+1") and tiny footers that
       // are not answers; require a real answer length for those only.
       const broadSelectors = new Set(['[class*="response"]', '[class*="bubble"]']);
@@ -100,6 +107,12 @@
           if (seen.has(node)) continue;
           seen.add(node);
 
+          // Skip ANCESTOR containers that wrap a more-specific leaf we capture
+          // separately — their innerText would just repeat that leaf's content.
+          const wrapsLeaf = leafSelectors.some(ls =>
+            ls !== sel && node.querySelector(ls));
+          if (wrapsLeaf) continue;
+
           const text = extractAnswerText(node).trim();
           if (!text) continue;
           if (broadSelectors.has(sel) && text.length < MIN_BROAD_LEN) continue;
@@ -109,7 +122,18 @@
       }
 
       if (parts.length === 0) return null;
-      return parts.join('\n\n').trim();
+
+      // De-duplicate: drop any part whose normalized text is fully contained in
+      // another part (residual ancestor overlap or mermaid preview labels).
+      const norm = s => s.replace(/\s+/g, '');
+      const kept = [];
+      for (const p of parts) {
+        const pn = norm(p);
+        const absorbed = parts.some(q => q !== p && norm(q).includes(pn) && norm(q).length > pn.length);
+        if (!absorbed) kept.push(p);
+      }
+
+      return kept.join('\n\n').trim();
     }
   });
 
@@ -140,7 +164,10 @@
       '[class*="chain"]',
       '[class*="cot"]',
       '[data-type*="think"]',
-      '[data-type*="reason"]'
+      '[data-type*="reason"]',
+      // Rendered mermaid preview duplicates the diagram source in the code block;
+      // drop the preview so only the flowchart source text is kept.
+      '[class*="mermaid"]'
     ];
     for (const selector of noiseSelectors) {
       clone.querySelectorAll(selector).forEach(el => el.remove());

@@ -143,34 +143,35 @@ function runExtract(adapter, buildDoc) {
 function buildScenario({ withThinking = false } = {}) {
   const root = new FakeEl('div');
 
-  // Mirror the REAL chatglm.cn page (observed 2026): a thinking block precedes
-  // the answer, the answer is one big .markdown-body (with <details> and a
-  // mermaid <style> blob), and a "来源 / 推荐问题" footer follows it.
-  function makeAnswer(text) {
+  // Mirror the REAL chatglm.cn page (observed 2026): the answer is rendered as
+  // SEVERAL .markdown-body section blocks, all wrapped by an ancestor .answer
+  // (which would duplicate everything if captured), plus a thinking block,
+  // a mermaid diagram rendered BOTH as source (in <pre>) and as a preview div,
+  // and a footer. This exercises the de-duplication fixes.
+  function makeSection(text) {
     const md = new FakeEl('div', ['markdown-body']);
     md.innerText = text;
     return md;
   }
 
-  // ---- the actual answer wrapper (.answer), which in reality contains BOTH
-  //      the thinking block and the body markdown (per chatglm.cn diagnostic) ----
+  // Ancestor wrapper that contains all the leaf sections (must be SKIPPED).
   const answer = new FakeEl('div', ['answer']);
-  const body = makeAnswer([
+
+  const s1 = makeSection([
     '基于对最新社区插件和最佳实践的调研，为 DSH 选择搜索插件……',
-    '',
     '🏆 核心推荐插件概览',
     'ModSearch @liustack/modsearch 功能全面、免费起步 github.com',
-    '',
-    '<details> 安装与快速配置：dsh plugin --profile web add @liustack/modsearch </details>',
-    '',
-    '✅ 总结 对于绝大多数用户，ModSearch 是最佳起点。'
+    '<details> 安装与快速配置：dsh plugin --profile web add @liustack/modsearch </details>'
   ].join('\n'));
-  answer.appendChild(body);
+  answer.appendChild(s1);
 
-  // ---- thinking block (REAL chatglm.cn class "text-advance-thinking-content")
-  //      nested INSIDE .answer — must be stripped, including inline
-  //      tencent.com / aliyun.com. This is the exact case the diagnostic showed
-  //      failing (thinking survived inside .answer). ----
+  const s2 = makeSection([
+    '✅ 总结 对于绝大多数用户，ModSearch 是最佳起点。',
+    '想零成本体验语义搜索，选 dsh-web-search-exa 作为备胎。'
+  ].join('\n'));
+  answer.appendChild(s2);
+
+  // ---- thinking block (REAL class "text-advance-thinking-content") nested in .answer ----
   if (withThinking) {
     const think = new FakeEl('div', ['answer-content-wrap', 'text-advance-thinking-content']);
     const md = new FakeEl('div', ['markdown-body', 'dr_margin_botttom', 'md-body', 'tl']);
@@ -180,18 +181,23 @@ function buildScenario({ withThinking = false } = {}) {
       'aliyun.com +1'
     ].join('\n');
     think.appendChild(md);
-    answer.appendChild(think); // nested inside .answer
+    answer.appendChild(think);
   }
+
+  // ---- mermaid diagram lives INSIDE a .markdown-body (as on the real page):
+  //      SOURCE in <pre> (keep) + rendered PREVIEW div (drop) ----
+  const pre = new FakeEl('pre');
+  pre.innerText = 'flowchart LR\n A[开始] --> B{需求?}\n B -- 免费 --> C[ModSearch]';
+  s2.appendChild(pre);
+
+  const preview = new FakeEl('div', ['mermaid']);
+  preview.innerText = '开始需求?免费ModSearch'; // flattened labels — must NOT appear
+  s2.appendChild(preview);
 
   // nested mermaid <style> blob — must NOT leak
   const style = new FakeEl('style');
   style.innerText = '#mmd-1788611910196-3{font-family:"PingFang SC";}@keyframes dash{to{stroke-dashoffset:0;}}';
-  body.appendChild(style);
-
-  // nested mermaid diagram text (real answer content — must be KEPT)
-  const mermaid = new FakeEl('div', ['mermaid']);
-  mermaid.innerText = '开始选择DSH搜索插件 主要需求是什么？ ModSearch dsh-web-search-pro';
-  body.appendChild(mermaid);
+  s1.appendChild(style);
 
   root.appendChild(answer);
 
@@ -204,29 +210,35 @@ function buildScenario({ withThinking = false } = {}) {
 }
 
 function assert(cond, msg) { if (!cond) throw new Error(msg); }
+function count(hay, needle) { return hay.split(needle).length - 1; }
 
 // ---- tests ------------------------------------------------------------------
 
 (async () => {
-  // Kimi: full reply must be captured, thinking/mermaid-style excluded.
+  // Kimi: full reply ONCE, thinking/mermaid-preview/style excluded, no dup.
   {
     const out = runExtract('content/kimi.js', () => buildScenario({ withThinking: true }));
     assert(out.includes('核心推荐插件概览'), 'kimi: missing answer body (truncated)');
     assert(out.includes('ModSearch'), 'kimi: missing ModSearch in reply');
     assert(out.includes('dsh plugin'), 'kimi: missing <details> install command');
-    assert(out.includes('开始选择DSH搜索插件'), 'kimi: missing mermaid diagram text');
+    assert(count(out, '✅ 总结') === 1, 'kimi: reply duplicated (✅ 总结 x' + count(out, '✅ 总结') + ')');
+    assert(out.includes('flowchart LR'), 'kimi: missing mermaid SOURCE');
+    assert(!out.includes('开始需求?免费ModSearch'), 'kimi: mermaid PREVIEW labels leaked');
     assert(!out.includes('Hmm, 用户想'), 'kimi: thinking block leaked into reply');
     assert(!out.includes('#mmd-'), 'kimi: mermaid <style> CSS leaked into reply');
     console.log('kimi aggregation OK (len=' + out.length + ')');
   }
 
-  // GLM: same real-page shape — thinking + mermaid style stripped, answer kept.
+  // GLM: same real-page shape — thinking + mermaid preview + style stripped,
+  // answer captured exactly ONCE (no ancestor/duplicate pasting).
   {
     const out = runExtract('content/glm.js', () => buildScenario({ withThinking: true }));
     assert(out.includes('核心推荐插件概览'), 'glm: missing answer body (truncated)');
     assert(out.includes('ModSearch'), 'glm: missing ModSearch in reply');
     assert(out.includes('dsh plugin'), 'glm: missing <details> install command');
-    assert(out.includes('开始选择DSH搜索插件'), 'glm: missing mermaid diagram text');
+    assert(count(out, '✅ 总结') === 1, 'glm: reply duplicated (✅ 总结 x' + count(out, '✅ 总结') + ')');
+    assert(out.includes('flowchart LR'), 'glm: missing mermaid SOURCE');
+    assert(!out.includes('开始需求?免费ModSearch'), 'glm: mermaid PREVIEW labels leaked');
     assert(!out.includes('Hmm, 用户想'), 'glm: think-block leaked into reply');
     assert(!out.includes('#mmd-'), 'glm: mermaid <style> CSS leaked into reply');
     // The leaked domains lived INSIDE the thinking block, so stripping thinking
