@@ -75,8 +75,11 @@
     // getLatestResponse 已删除: base.js 默认派生取 .model-response-text 最后块
     // 经 DOM→Markdown 序列化。chat-history/upgrade 标题在容器外, 不会被抓入。
     extractNoiseSelectors: [
-      '[class*="sources"]',
-      '[class*="citation"]'
+      // 注意: 不能用 [class*="citation"]——gemini 正文文本全在 span.citation-7
+      // 里, 剥掉它们等于删正文(实测输出 ****`` 且整句丢失)。只剥真正的来源
+      // 卡片元素(自定义标签, 不承载正文):
+      'sources-carousel-inline',
+      'source-inline-chip'
     ],
 
 
