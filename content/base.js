@@ -386,6 +386,20 @@
         return true;
       }
 
+      // Composer-readiness probe: content script alive is NOT enough for a
+      // freshly opened SPA tab — React/Angular mount the composer a few
+      // seconds after our document_idle injection. ENSURE_TAB polls this so
+      // the fan-out only starts once the input field actually exists.
+      if (message.type === 'CHECK_INPUT') {
+        let ready = false;
+        try {
+          ready = !!(window.AIPanelDom && window.AIPanelDom.findInputField(
+            config.inputSelectors, { preferBottom: true }));
+        } catch (e) { ready = false; }
+        sendResponse({ ready });
+        return true;
+      }
+
       // Liveness probe used by the side panel to verify this script is alive
       if (message.type === 'PING') {
         sendResponse({ pong: true });
