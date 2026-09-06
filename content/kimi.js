@@ -147,10 +147,17 @@
       '.segment-assistant-actions',
       '[class*="segment-assistant-actions"]',
       // CDP 实测: 联网搜索返回的引用卡片块在正文最前面
-      // (.pua-ref-renderer / .pua-ref-article-block / .pua-ref-article-card,
+      // (.pua-ref-renderer--5 内含 .pua-ref-article-block / .pua-ref-article-card,
       //  形如「Github GitHub - xxx/dsh-xxx: ... 2周前」)。
-      // 按用户要求剥离, 只保留 kimi 自己的分析正文(标题/段落/表格)。
-      '[class*="pua-ref"]'
+      // 按用户要求剥离卡片, 但注意: 正文段落里的行内引用角标
+      // a.pua-ref-cite-tag(带真实来源 href 的深链)也带 pua-ref 前缀——
+      // 不能用 [class*="pua-ref"] 一刀切(实测会误删正文引用, 9 个 renderer
+      // 中只有 1 个是卡片块, 其余 8 个是正文角标容器)。
+      // 用 :has 精确删「含文章卡片的 renderer」, 行内角标保留,
+      // 由 serializeInline 的 a[href] 分支输出 [文本](来源) 链接。
+      '.pua-ref-renderer:has([class*="pua-ref-article"])',
+      '[class*="pua-ref-article"]',
+      '.carousel-container'
     ];
     for (const selector of noiseSelectors) {
       clone.querySelectorAll(selector).forEach(el => el.remove());

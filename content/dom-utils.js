@@ -494,10 +494,22 @@
       }
       if (tag === 'A' && child.getAttribute('href')) {
         let t = (child.innerText || '').trim();
-        const href = child.getAttribute('href');
+        let href = child.getAttribute('href');
         // deepseek 数字角标 <a href=来源><span class="ds-markdown-cite">-4-</span></a>
         // 去掉包围的破折号, 输出 [4](来源)
         if (/^[-–—\s]*\d+[-–—\s]*$/.test(t)) t = t.replace(/[-–—\s]/g, '');
+        // 坏 href 防御(kimi 的 markdown 解析 bug 会把 ** / 空格 / [..] 塞进
+        // href): URL 不应含裸空格, 超长也视为损坏 —— 丢弃整个引用(该 a 是
+        // 空锚, 丢弃无正文损失), 避免整段英文源码混进正文
+        if (/\s/.test(href) || href.length > 300) { out += t || ''; continue; }
+        // kimi 空锚角标: 文本为空但有 data-site-name(如 "Github"/"exa.ai"),
+        // 兜底再从 href 提取域名 —— 统一输出 [来源名](链接)
+        if (!t) {
+          t = (child.getAttribute('data-site-name') || '').trim();
+          if (!t) {
+            try { t = new URL(href, location.href).hostname.replace(/^www\./, ''); } catch (e) { /* keep empty */ }
+          }
+        }
         // 行内引用锚点: 保留为链接 Markdown
         out += t ? '[' + t + '](' + href + ')' : href;
         continue;
@@ -626,21 +638,42 @@
     return text;
   }
 
+  // 行内标签: 与相邻内容属同一句, 序列化后用空格连接而非换行
+  const INLINE_TAGS = new Set(['STRONG', 'B', 'EM', 'I', 'CODE', 'KBD', 'SAMP', 'A',
+    'SPAN', 'SUP', 'SUB', 'MARK', 'SMALL', 'U', 'S', 'DEL', 'INS', 'BR', 'IMG']);
+
   function serializeChildren(parent) {
+    // parts: { text, inline } — inline=来自行内元素或裸文本(与相邻同句)
     const parts = [];
-    for (const child of parent.children) {
-      if (child.nodeType !== 1) continue; // Node.ELEMENT_NODE
+    // 按 childNodes 顺序遍历: 裸文本节点也要收集 —— kimi 的段落是
+    // <div class="paragraph">[TEXT <strong> TEXT <code> TEXT <div 引用容器>]</div>,
+    // 只遍历 children(元素)会把 160 字句里 140+ 字的裸文本全丢(实测只剩
+    // 「核心能力：\n\nread_page」)
+    let textBuf = '';
+    const flushText = () => {
+      const t = textBuf.replace(/\s+/g, ' ').trim();
+      if (t) parts.push({ text: t, inline: true });
+      textBuf = '';
+    };
+    for (const child of parent.childNodes) {
+      if (child.nodeType === 3) { textBuf += child.nodeValue || ''; continue; } // TEXT_NODE
+      if (child.nodeType !== 1) continue; // ELEMENT_NODE
+      flushText();
       const t = serializeBlock(child).trim();
-      if (t) parts.push(t);
+      if (t) parts.push({ text: t, inline: INLINE_TAGS.has(child.tagName) });
     }
-    // 列表项之间不加空行
+    flushText();
+    // 拼接: 行内+行内 → 空格连成一句; 列表项 → 单换行; 块级 → 空行
     let out = '';
     for (let i = 0; i < parts.length; i++) {
-      const prevIsItem = parts[i - 1] && parts[i - 1].startsWith('- ');
-      const curIsItem = parts[i].startsWith('- ');
-      if (i === 0) out = parts[i];
-      else if (prevIsItem && curIsItem) out += '\n' + parts[i];
-      else out += '\n\n' + parts[i];
+      const prev = parts[i - 1];
+      const cur = parts[i];
+      const prevIsItem = prev && prev.text.startsWith('- ');
+      const curIsItem = cur.text.startsWith('- ');
+      if (i === 0) out = cur.text;
+      else if (prevIsItem && curIsItem) out += '\n' + cur.text;
+      else if (prev.inline && cur.inline) out += ' ' + cur.text;
+      else out += '\n\n' + cur.text;
     }
     return out;
   }
