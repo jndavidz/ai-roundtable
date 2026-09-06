@@ -93,6 +93,23 @@ async function handleMessage(message, sender) {
       notifySidePanel('RESPONSE_CAPTURED', { aiType: message.aiType, content: message.content });
       return { success: true };
 
+    case 'ACTIVATE_TAB':
+      // 后台标签限制(gemini 等 Angular/Quill 站点在 hidden 标签里响应式更新
+      // 被浏览器挂起, 点击发送无效——用户实测「只有手动点开 Gemini 标签才会
+      // 激活对话」)。content script 提交失败时请求激活自己: 还原聚焦窗口 +
+      // 激活标签, 让页面恢复 visible 后再重试。
+      try {
+        if (sender.tab?.windowId) {
+          await chrome.windows.update(sender.tab.windowId, { focused: true, state: 'normal' });
+        }
+        if (sender.tab?.id) {
+          await chrome.tabs.update(sender.tab.id, { active: true });
+        }
+      } catch (err) {
+        // 窗口已聚焦/标签已激活等无害失败
+      }
+      return { success: true };
+
     case 'CONTENT_SCRIPT_READY':
       // Content script loaded and ready
       const aiType = getAITypeFromUrl(sender.tab?.url);

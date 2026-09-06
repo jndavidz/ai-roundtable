@@ -407,7 +407,44 @@
 
       await window.AIPanelDom.setEditorText(inputEl, text, { afterInputDelay: config.afterInputDelay ?? 500 });
 
-      const submitResult = await window.AIPanelDom.submitMessage(inputEl, config.submitOptions);
+      const submitResult = await window.AIPanelDom.submitMessage(inputEl, config.submitOptions).catch(async (err) => {
+        // 后台标签限制: gemini 等 Angular/Quill 站点在 hidden 标签里点击发送
+        // 无效(实测 visible="hidden" 时 setText 后点击无反应; 用户观察到
+        // 「只有手动点开 Gemini 标签才会激活对话」)。请求 background 激活
+        // 本标签, 等页面恢复可见后重新写入并提交一次。
+        if (!/Submit did not start|remained unchanged/i.test(err.message || '')) throw err;
+        console.log('[AI Panel]', name, 'submit failed in background tab, activating tab and retrying...');
+        try { await chrome.runtime.sendMessage({ type: 'ACTIVATE_TAB' }); } catch (e2) { /* sidepanel closed etc */ }
+        await new Promise((resolve) => {
+          if (document.visibilityState === 'visible') return resolve();
+          const onVis = () => {
+            if (document.visibilityState === 'visible') {
+              document.removeEventListener('visibilitychange', onVis);
+              resolve();
+            }
+          };
+          document.addEventListener('visibilitychange', onVis);
+          setTimeout(resolve, 2500); // 兜底: visibility 事件没来也继续
+        });
+        // 激活后重新写入: gemini 的编辑器是 Quill(hidden 时 model 不同步,
+        // 这是发送无效的深层原因), 优先用 Quill 实例 API 保证 model 同步;
+        // 其他编辑器退回 execCommand 路径
+        let quill = null;
+        try {
+          let n = inputEl;
+          for (let i = 0; i < 6 && n; i++) {
+            if (n.__quill && typeof n.__quill.setText === 'function') { quill = n.__quill; break; }
+            n = n.parentElement;
+          }
+        } catch (e2) { /* probe failure: fall through */ }
+        if (quill) {
+          quill.setText(text);
+          await sleep(config.afterInputDelay ?? 500);
+        } else {
+          await window.AIPanelDom.setEditorText(inputEl, text, { afterInputDelay: config.afterInputDelay ?? 500 });
+        }
+        return await window.AIPanelDom.submitMessage(inputEl, config.submitOptions);
+      });
       console.log('[AI Panel]', name, 'message sent via', submitResult.method, 'starting response capture...');
 
       capture.captureResponse({ preSendContent });
