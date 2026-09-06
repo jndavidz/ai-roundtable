@@ -162,6 +162,17 @@ async function handleMessage(message, sender) {
       try {
         const key = async (type, opts) =>
           await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', Object.assign({ type }, opts));
+        // 先在 debugger 会话内聚焦编辑器 —— Input.insertText 落在当前焦点
+        // 元素, 而标签激活/SPA 挂载过程中页面焦点未必在编辑器上(实测
+        // 「对话框空白」: content script 侧的 focus() 时序对不上)。
+        const focusRes = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+          expression: "(function(){ var eds = Array.from(document.querySelectorAll('[contenteditable=\"true\"]')).filter(function(e){ return e.offsetParent; }); var ed = eds[eds.length - 1]; if (!ed) return 'NO_EDITOR'; ed.focus(); return 'focused'; })()",
+          returnByValue: true
+        });
+        if (focusRes?.result?.value === 'NO_EDITOR') {
+          return { success: false, error: 'composer not found on page' };
+        }
+        await new Promise(r => setTimeout(r, 300));
         // trusted Ctrl+A + Delete 清掉残留(重试场景输入框可能有旧文本)
         await key('keyDown', { modifiers: 2, key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65 });
         await key('keyUp', { modifiers: 2, key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65 });
