@@ -25,6 +25,24 @@ const AI_URL_PATTERNS = {
   hunyuan: ['yuanbao.tencent.com']
 };
 
+// Home URLs used when a model's tab is missing and the side panel asks the
+// background to open one (A-plan auto-open). Based on the hosts actually in
+// use; keep in sync with AI_URL_PATTERNS.
+const AI_HOME_URLS = {
+  claude: 'https://claude.ai/new',
+  chatgpt: 'https://chatgpt.com/',
+  gemini: 'https://gemini.google.com/app',
+  deepseek: 'https://chat.deepseek.com/',
+  glm: 'https://chatglm.cn/',
+  kimi: 'https://www.kimi.com/',
+  grok: 'https://grok.com/',
+  qianwen: 'https://www.qianwen.com/',
+  mimo: 'https://aistudio.xiaomimimo.com/',
+  minimax: 'https://agent.minimaxi.com/',
+  doubao: 'https://www.doubao.com/',
+  hunyuan: 'https://yuanbao.tencent.com/'
+};
+
 const AI_TYPES = Object.keys(AI_URL_PATTERNS);
 
 const AI_DISPLAY_NAMES = {

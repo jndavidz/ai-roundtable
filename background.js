@@ -93,6 +93,37 @@ async function handleMessage(message, sender) {
       notifySidePanel('RESPONSE_CAPTURED', { aiType: message.aiType, content: message.content });
       return { success: true };
 
+    case 'ENSURE_TAB': {
+      // A-plan auto-open: the side panel asks for a model tab that is not
+      // currently open. Create it in the background, then poll until the
+      // content script is reachable (checkAIConnection pings and re-injects
+      // if needed), so the following SEND_MESSAGE lands on a live tab.
+      const aiType = message.aiType;
+      const home = (typeof AI_HOME_URLS !== 'undefined' && AI_HOME_URLS[aiType]) || null;
+      if (!home) return { success: false, error: 'unknown aiType: ' + aiType };
+      const deadline = Date.now() + 45000;
+      while (Date.now() < deadline) {
+        const probe = await checkAIConnection(aiType);
+        if (probe.connected) return { success: true };
+        // Not there yet — create on first loop, then keep polling load
+        try {
+          const tabsNow = await chrome.tabs.query({});
+          const patterns = AI_URL_PATTERNS[aiType] || [];
+          const exists = tabsNow.some(t => {
+            try {
+              const h = new URL(t.url).hostname.toLowerCase().replace(/^www\./, '');
+              return patterns.some(pt => hostnameMatches(h, pt));
+            } catch (e) { return false; }
+          });
+          if (!exists) await chrome.tabs.create({ url: home, active: false });
+        } catch (err) {
+          return { success: false, error: err.message };
+        }
+        await new Promise(r => setTimeout(r, 1500));
+      }
+      return { success: false, error: 'timeout waiting for ' + aiType + ' tab to become ready' };
+    }
+
     case 'ACTIVATE_TAB':
       // 后台标签限制(gemini 等 Angular/Quill 站点在 hidden 标签里响应式更新
       // 被浏览器挂起, 点击发送无效——用户实测「只有手动点开 Gemini 标签才会

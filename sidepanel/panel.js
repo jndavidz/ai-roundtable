@@ -331,6 +331,10 @@ async function handleSend() {
 
   sendBtn.disabled = true;
 
+  // A-plan: open tabs for targets that have no tab yet (already-open tabs are
+  // used as-is, so their current conversation and context are preserved).
+  await ensureTabsOpen(targets);
+
   // Send files first if any. Encode ONCE — each target lives in its own tab
   // but the bytes are identical, so re-reading + re-encoding per target used
   // to multiply large-file base64 work by the number of targets.
@@ -741,6 +745,48 @@ async function getLatestResponse(aiType) {
       }
     );
   });
+}
+
+// A-plan auto-open: before a fan-out, make sure every target model actually
+// has an open tab. Tabs that are already open are used as-is (current
+// conversation, context preserved); only missing ones get created (landing on
+// the site home = a fresh conversation).
+async function ensureTabsOpen(targets) {
+  const tabs = await chrome.tabs.query({});
+  const missing = [];
+  for (const ai of targets) {
+    const patterns = AI_URL_PATTERNS[ai] || [];
+    const has = tabs.some(t => {
+      try {
+        const h = new URL(t.url).hostname.toLowerCase().replace(/^www\./, '');
+        return patterns.some(pt => hostnameMatches(h, pt));
+      } catch (e) { return false; }
+    });
+    if (!has) missing.push(ai);
+  }
+  if (missing.length === 0) return;
+
+  log(`正在打开未连接的站点: ${missing.map(getAIName).join('、')}（首次打开需要几秒加载）...`);
+  const results = await Promise.all(missing.map(async (ai) => {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: 'ENSURE_TAB', aiType: ai }, (response) => {
+        if (chrome.runtime.lastError) {
+          resolve({ aiType: ai, success: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        resolve({ aiType: ai, success: !!response?.success, error: response?.error });
+      });
+    });
+  }));
+  for (const r of results) {
+    if (r.success) {
+      updateTabStatus(r.aiType, true);
+      log(`${getAIName(r.aiType)} 标签已打开并就绪`, 'success');
+    } else {
+      log(`打开 ${getAIName(r.aiType)} 失败: ${r.error}`, 'error');
+      log(`请手动打开 ${getAIName(r.aiType)} 标签并确认已登录，再重试群发`, 'error');
+    }
+  }
 }
 
 async function sendToAI(aiType, message) {
