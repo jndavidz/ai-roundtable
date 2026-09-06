@@ -440,9 +440,14 @@
       // the input text populated (e.g. Gemini keeps a hidden textarea filled).
       if (button && (!document.contains(button) || isDisabled(button))) return true;
 
-      // Priority 3: check if input text was cleared (common for textarea inputs)
+      // Priority 3: check if input text was CLEARED (all sites empty the
+      // editor on real send). Note: text "changed but non-empty" is NOT a
+      // success signal — hidden-tab editors (ProseMirror etc) asynchronously
+      // normalize the DOM after our write, which used to fake a send here
+      // (claude misreported "Message sent" while the text was still sitting
+      // unsent in the editor).
       const currentText = getElementText(inputEl).trim();
-      if (!currentText || currentText !== beforeText) return true;
+      if (!currentText) return true;
 
       if (!document.contains(inputEl)) return true;
       await sleep(100);

@@ -447,6 +447,14 @@
       });
       console.log('[AI Panel]', name, 'message sent via', submitResult.method, 'starting response capture...');
 
+      // 后台标签的捕获循环会被 Chrome intensive throttling 拖到分钟级
+      // (实测 deepseek/qianwen 发送后 20+ 分钟才捕获, 用户点开标签立即恢复)。
+      // 发送成功后若本标签不可见, 请求 background 激活自己——用户会看到标签
+      // 依次弹出聚焦, 这是实时捕获的代价; 用户正看的标签不会被打扰。
+      if (document.visibilityState === 'hidden') {
+        try { await chrome.runtime.sendMessage({ type: 'ACTIVATE_TAB' }); } catch (e3) { /* ignore */ }
+      }
+
       capture.captureResponse({ preSendContent });
       return true;
     }
