@@ -58,8 +58,45 @@
       'button[aria-label*="停止"]',
       'button[aria-label*="Stop"]',
       '[class*="stop-generating"]'
-    ]
+    ],
 
-    // getLatestResponse omitted — base.js derives it from responseSelectors.
+    // CDP 实测(2026-09): minimax 把回复拆成 16 个 markdown 分段流式渲染、
+    // mimo 拆成 3 块——默认派生取最后一块只能拿到一段列表项/表格。
+    // 修复: 找「包含全部 markdown 块的最近公共父容器」, 对容器整体序列化。
+    getLatestResponse: function () {
+      var blocks = document.querySelectorAll('[class*="markdown"]');
+      if (!blocks.length) return null;
+      var last = blocks[blocks.length - 1];
+      var container = last;
+      var total = blocks.length;
+      while (container && container !== document.body) {
+        var inside = container.querySelectorAll('[class*="markdown"]').length;
+        if (inside >= total) break;
+        container = container.parentElement;
+      }
+      if (!container || container === document.body) {
+        // 兜底: 拼接全部块
+        var parts = [];
+        blocks.forEach(function (b) {
+          var t = window.AIPanelDom && window.AIPanelDom.toMarkdown
+            ? window.AIPanelDom.toMarkdown(b) : (b.innerText || '');
+          if (t && t.trim()) parts.push(t.trim());
+        });
+        return parts.join('\n\n') || null;
+      }
+      var clone = container.cloneNode(true);
+      clone.querySelectorAll('style, script').forEach(function (el) { el.remove(); });
+      var md = window.AIPanelDom && window.AIPanelDom.toMarkdown
+        ? window.AIPanelDom.toMarkdown(clone)
+        : (clone.innerText || '');
+      md = md
+        .replace(/^\s*\w*\s*(表格|复制|下载|代码预览|代码|预览)\s*$/gmi, '')
+        .replace(/^\s*已深度思考\s*$/gm, '') // mimo 思考标记残留
+        .replace(/```\s*\n+```/g, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+      return md || null;
+    }
+
   });
 })();

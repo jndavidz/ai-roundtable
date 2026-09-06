@@ -72,8 +72,27 @@
       '[aria-label*="Stop"]',
       'button[aria-label*="stop"]',
       '[class*="stop-generating"]'
-    ]
+    ],
 
-    // getLatestResponse omitted — base.js derives it from responseSelectors.
+    // CDP 实测(2026-09): 新版豆包是 CSS modules hash class, 旧选择器全部失效。
+    // 结构: 用户消息 container-xxx md-box-root gh-user;
+    //       助手回复 container-xxx md-box-root(不带 gh-user)。
+    // 用 :not(gh-user) 区分, 取最后一条助手消息整体序列化。
+    getLatestResponse: function () {
+      var boxes = document.querySelectorAll('[class*="md-box-root"]:not([class*="gh-user"])');
+      if (!boxes.length) return null;
+      var last = boxes[boxes.length - 1];
+      var clone = last.cloneNode(true);
+      clone.querySelectorAll('style, script').forEach(function (el) { el.remove(); });
+      var md = window.AIPanelDom && window.AIPanelDom.toMarkdown
+        ? window.AIPanelDom.toMarkdown(clone)
+        : (clone.innerText || '');
+      md = md
+        .replace(/^\s*\w*\s*(表格|复制|下载|代码预览|代码|预览)\s*$/gmi, '')
+        .replace(/```\s*\n+```/g, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+      return md || null;
+    }
   });
 })();

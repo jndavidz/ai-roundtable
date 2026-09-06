@@ -13,7 +13,8 @@ const site = (argv.find(a => a.startsWith('--site=')) || '').slice(7) || 'chatgl
 const SITE_FILE = {
   'chatglm.cn': 'glm.js', 'kimi.com': 'kimi.js', 'chat.deepseek.com': 'deepseek.js',
   'chatgpt.com': 'chatgpt.js', 'claude.ai': 'claude.js', 'gemini.google.com': 'gemini.js',
-  'grok.com': 'grok.js', 'qianwen.com': 'qianwen.js'
+  'grok.com': 'grok.js', 'qianwen.com': 'qianwen.js',
+  'minimax': 'minimax.js', 'mimo': 'mimo.js', 'doubao': 'doubao.js', 'hunyuan': 'hunyuan.js'
 };
 const src = fs.readFileSync(path.join("D:/repos/ai-roundtable/content", SITE_FILE[site]), "utf8");
 const domUtilsSrc = fs.readFileSync(path.join("D:/repos/ai-roundtable/content", "dom-utils.js"), "utf8");
