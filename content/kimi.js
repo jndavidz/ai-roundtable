@@ -162,7 +162,12 @@
       // CDP 实测: .segment-assistant-actions 是回复下方的操作按钮区
       // (「引用 / 复制 / 重新生成」等), 不是答复内容
       '.segment-assistant-actions',
-      '[class*="segment-assistant-actions"]'
+      '[class*="segment-assistant-actions"]',
+      // CDP 实测: 联网搜索返回的引用卡片块在正文最前面
+      // (.pua-ref-renderer / .pua-ref-article-block / .pua-ref-article-card,
+      //  形如「Github GitHub - xxx/dsh-xxx: ... 2周前」)。
+      // 按用户要求剥离, 只保留 kimi 自己的分析正文(标题/段落/表格)。
+      '[class*="pua-ref"]'
     ];
     for (const selector of noiseSelectors) {
       clone.querySelectorAll(selector).forEach(el => el.remove());

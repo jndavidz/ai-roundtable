@@ -170,6 +170,12 @@ function buildKimi() {
 
   const tail = new FakeEl('div', ['toolcall-rollup__tail']);
   const mdContainer = new FakeEl('div', ['markdown-container']);
+  // 联网搜索引用卡片(应剥离, 按用户要求只保留分析正文)
+  const refBlock = new FakeEl('div', ['pua-ref-renderer', 'pua-ref-article-block']);
+  const refCard = new FakeEl('div', ['pua-ref-article-card']);
+  refCard.innerText = 'Github GitHub - libinghui55/dsh-tavily-search: Tavily-backed web search 2周前';
+  refBlock.appendChild(refCard);
+  mdContainer.appendChild(refBlock);
   const md = new FakeEl('div', ['markdown']);
   md.innerText = ['基于对最新插件的调研，推荐如下：',
                   '🏆 核心推荐插件概览',
@@ -271,6 +277,8 @@ function count(hay, needle) { return hay.split(needle).length - 1; }
     assert(!out.includes('使用 3 个工具'), 'kimi: tool-call summary leaked');
     assert(!out.includes('高峰时段算力不足'), 'kimi: upgrade promo leaked');
     assert(!out.includes('请联网搜索最佳实践'), 'kimi: user question leaked');
+    assert(!out.includes('libinghui55'), 'kimi: search-ref card leaked');
+    assert(out.includes('核心推荐插件概览'), 'kimi: analysis body missing after ref strip');
     console.log('kimi aggregation OK (len=' + out.length + ')');
   }
 
