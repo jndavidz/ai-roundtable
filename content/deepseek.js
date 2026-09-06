@@ -65,8 +65,40 @@
       'div[role="button"][aria-label*="stop"]',
       '.stop-button',
       '[class*="stop-generating"]'
-    ]
+    ],
 
-    // getLatestResponse omitted — base.js derives it from responseSelectors.
+    // CDP 实测(chat.deepseek.com 2026-09): 默认派生取最后 .ds-markdown 的
+    // innerText, 引用角标 <a href="来源"><span class="ds-markdown-cite">-4-</span></a>
+    // 被提成了独立行("- 4 - 6 - 8。")。改用 toMarkdown 序列化: 段落/标题/代码块
+    // 结构保留, 角标输出为 [4](来源) 链接(与 glm/kimi 的引用=链接原则一致)。
+    getLatestResponse: function () {
+      const sels = [
+        '.ds-markdown',
+        '[class*="markdown"]',
+        '[class*="message-content"]'
+      ];
+
+      let node = null;
+      for (const sel of sels) {
+        const nodes = Array.from(document.querySelectorAll(sel))
+          .filter(el => (el.innerText || '').trim().length > 0);
+        if (nodes.length > 0) { node = nodes[nodes.length - 1]; break; }
+      }
+      if (!node) return null;
+
+      const clone = node.cloneNode(true);
+      clone.querySelectorAll('style, script').forEach(el => el.remove());
+
+      let md = window.AIPanelDom && window.AIPanelDom.toMarkdown
+        ? window.AIPanelDom.toMarkdown(clone)
+        : (clone.innerText || '');
+
+      md = md
+        .replace(/^\s*\w*\s*(表格|复制|代码预览|代码|预览)\s*$/gmi, '')
+        .replace(/```\s*\n+```/g, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+      return md || null;
+    }
   });
 })();

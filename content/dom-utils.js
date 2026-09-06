@@ -451,6 +451,201 @@
     throw new Error('Submit did not start: input text remained unchanged after click/Enter');
   }
 
+
+  // ===== DOM → Markdown 序列化 =====
+  // innerText 会吞掉块级结构: 表格后直接贴标题、标题后直接贴正文序号、
+  // 代码块 UI 标签("bash 复制")混入、行内引用锚点只剩裸域名(github.com)。
+  // 因此改用按节点遍历的序列化, 逐类生成 Markdown, 保证段落/标题/代码/表格
+  // 各有正确分隔与语义。
+  const BLOCK_TAGS = new Set([
+    'P', 'DIV', 'SECTION', 'ARTICLE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+    'LI', 'UL', 'OL', 'PRE', 'BLOCKQUOTE', 'TABLE', 'THEAD', 'TBODY',
+    'TR', 'TH', 'TD', 'HR', 'DETAILS', 'SUMMARY', 'FIGURE', 'FIGCAPTION'
+  ]);
+  const SKIP_TEXT = /^(bash|代码|预览|复制|mermaid|Copy|code)$/i;
+
+  // 行内序列化: 保留链接与代码, 剥离纯 UI 标签
+  function serializeInline(node) {
+    let out = '';
+    const kids = node.childNodes || [];
+    for (const child of kids) {
+      if (child.nodeType === 3) { // Node.TEXT_NODE
+        out += child.nodeValue;
+        continue;
+      }
+      if (child.nodeType !== 1) continue; // Node.ELEMENT_NODE
+      const tag = child.tagName;
+      // SVG 渲染树(mermaid 预览等)不进正文: 其内部 <text> 是图形标签非正文
+      if (tag === 'svg' || tag === 'SVG' || (child.namespaceURI || '').includes('svg')) continue;
+      const cls = (child.className && child.className.baseVal !== undefined
+        ? child.className.baseVal : child.className) || '';
+      // 代码块的 UI 控件(语言标签/复制按钮/顶栏) 不进正文
+      if (/\btop(-outer)?\b|\blanguage\b|copy-btn|复制/.test(String(cls))) continue;
+      // chatglm 引用角标: <span class="source-item" data-url="https://...">github.com</span>
+      // 按用户要求输出为 [域名](链接), 而不是裸域名
+      if (child.getAttribute) {
+        const dataUrl = child.getAttribute('data-url');
+        if (dataUrl && /source-item|\bcitation\b|\bref\b/.test(String(cls) + ' ' + String(child.parentElement?.className || ''))) {
+          const nameEl = child.querySelector('.source-item-num-name');
+          const name = ((nameEl ? nameEl.innerText : child.innerText) || '').trim() || '来源';
+          out += '[' + name + '](' + dataUrl + ')';
+          continue;
+        }
+      }
+      if (tag === 'A' && child.getAttribute('href')) {
+        let t = (child.innerText || '').trim();
+        const href = child.getAttribute('href');
+        // deepseek 数字角标 <a href=来源><span class="ds-markdown-cite">-4-</span></a>
+        // 去掉包围的破折号, 输出 [4](来源)
+        if (/^[-–—\s]*\d+[-–—\s]*$/.test(t)) t = t.replace(/[-–—\s]/g, '');
+        // 行内引用锚点: 保留为链接 Markdown
+        out += t ? '[' + t + '](' + href + ')' : href;
+        continue;
+      }
+      if (tag === 'CODE' || tag === 'KBD' || tag === 'SAMP') {
+        out += '`' + (child.innerText || '') + '`';
+        continue;
+      }
+      if (tag === 'BR') { out += '\n'; continue; }
+      if (tag === 'STRONG' || tag === 'B') { out += '**' + serializeInline(child) + '**'; continue; }
+      if (tag === 'EM' || tag === 'I') { out += '*' + serializeInline(child) + '*'; continue; }
+      if (BLOCK_TAGS.has(tag)) { out += serializeInline(child); continue; }
+      out += serializeInline(child);
+    }
+    // 叶子兜底: 无子节点的元素(真实 DOM 的 <b>x</b> 文本已在上面收集; 测试
+    // fake DOM 的叶子文本存在自身)从 textContent/innerText 取
+    if (!out.trim() && kids.length === 0) {
+      out = (node.textContent || node.innerText || '');
+    }
+    return out;
+  }
+
+  // 表格 → Markdown 管道表
+  function serializeTable(table) {
+    const rows = [];
+    table.querySelectorAll('tr').forEach(tr => {
+      const cells = [];
+      tr.querySelectorAll('th, td').forEach(c => {
+        cells.push((c.innerText || '').trim().replace(/\s+/g, ' '));
+      });
+      if (cells.length) rows.push(cells);
+    });
+    if (!rows.length) return '';
+    const width = Math.max(...rows.map(r => r.length));
+    const lines = rows.map((cells, i) => {
+      const pad = cells.concat(Array(Math.max(0, width - cells.length)).fill(''));
+      const line = '| ' + pad.join(' | ') + ' |';
+      return i === 0 ? line + '\n|' + Array(width).fill(' --- ').join('|') + '|' : line;
+    });
+    return lines.join('\n');
+  }
+
+  // 代码块: 只取代码本体, 丢弃 "bash 复制" 之类 UI 文本
+  function serializeCodeBlock(el) {
+    const cls = (el.className && el.className.baseVal !== undefined
+      ? el.className.baseVal : el.className) || '';
+    let lang = '';
+    const langEl = el.querySelector('.language, [class*="language-"]');
+    if (langEl) lang = (langEl.innerText || '').trim();
+    else {
+      const m = /language-(\w+)/.exec(String(cls));
+      if (m) lang = m[1];
+    }
+    // 代码内容通常在 <code> 或 <pre> 内; 去掉顶栏(.top/.top-outer)。
+    // mermaid 等渲染块可能没有 <code>, 回退 <pre> 再回退自身。
+    const codeEl = el.querySelector('code') || el.querySelector('pre') || el;
+    const code = (codeEl.innerText || '')
+      .split('\n')
+      // 「bash」「复制」「代码」「预览」「mermaid代码预览」等 UI 标签行
+      .filter(l => !/^\s*\w*\s*(表格|复制|下载|代码预览|代码|预览)\s*$/.test(l) && !/^\s*(bash|copy|mermaid)\s*$/i.test(l))
+      .join('\n')
+      .trim();
+    return '```' + lang + '\n' + code + '\n```';
+  }
+
+  // 块级序列化: 返回 Markdown 片段(不含尾部换行)
+  function serializeBlock(el) {
+    const tag = el.tagName;
+    const cls = (el.className && el.className.baseVal !== undefined
+      ? el.className.baseVal : el.className) || '';
+
+    // SVG 渲染树(mermaid 预览等)不进正文: 图形 <text> 是画布标签非答复内容
+    if (tag === 'SVG' || tag === 'svg' || (el.namespaceURI || '').includes('svg')) return '';
+
+    if (/^H[1-6]$/.test(tag)) {
+      const level = parseInt(tag.slice(1), 10);
+      return '#'.repeat(level) + ' ' + serializeInline(el).trim();
+    }
+    if (tag === 'TABLE') return serializeTable(el);
+    // 代码块判定: 只有 <pre> 或 class 明确是代码容器才当代码块。
+    // 不能仅凭「内部含 <code>」判断——正文容器里也嵌着代码块, 那样会把
+    // 整个正文误判成代码(实测只剩 ```bash ... ``` 三行)。
+    if (tag === 'PRE' || /code-no-artifacts|language-|highlight|code-block|md-code/.test(String(cls))) {
+      return serializeCodeBlock(el);
+    }
+    if (tag === 'LI') {
+      // 块级 li(嵌段落/代码块, 如 deepseek「安装命令：bash复制下载dsh plugin…」):
+      // 首行 "- ", 后续块缩进两格; 纯文本 li 仍走行内
+      const liBlockKids = Array.from(el.children).filter(c => BLOCK_TAGS.has(c.tagName));
+      if (liBlockKids.length > 0) {
+        return '- ' + serializeChildren(el).replace(/\n/g, '\n  ');
+      }
+      return '- ' + serializeInline(el).trim();
+    }
+    if (tag === 'BLOCKQUOTE') {
+      return serializeInline(el).trim().split('\n').map(l => '> ' + l).join('\n');
+    }
+    if (tag === 'HR') return '---';
+    if (tag === 'DETAILS') {
+      const sum = el.querySelector('summary');
+      const head = sum ? '**' + serializeInline(sum).trim() + '**' : '';
+      const rest = [];
+      for (const child of el.children) {
+        if (child === sum) continue;
+        const t = serializeBlock(child).trim();
+        if (t) rest.push(t);
+      }
+      return head + (rest.length ? '\n\n' + rest.join('\n\n') : '');
+    }
+    // 普通块: 若内部还有块级子节点则递归, 否则按行内文本处理
+    const blockChildren = Array.from(el.children).filter(c => BLOCK_TAGS.has(c.tagName));
+    if (blockChildren.length > 0) {
+      return serializeChildren(el);
+    }
+    const text = serializeInline(el).trim();
+    return text;
+  }
+
+  function serializeChildren(parent) {
+    const parts = [];
+    for (const child of parent.children) {
+      if (child.nodeType !== 1) continue; // Node.ELEMENT_NODE
+      const t = serializeBlock(child).trim();
+      if (t) parts.push(t);
+    }
+    // 列表项之间不加空行
+    let out = '';
+    for (let i = 0; i < parts.length; i++) {
+      const prevIsItem = parts[i - 1] && parts[i - 1].startsWith('- ');
+      const curIsItem = parts[i].startsWith('- ');
+      if (i === 0) out = parts[i];
+      else if (prevIsItem && curIsItem) out += '\n' + parts[i];
+      else out += '\n\n' + parts[i];
+    }
+    return out;
+  }
+
+  // 入口: 把容器序列化为 Markdown(先克隆, 避免改页面)
+  function toMarkdown(element) {
+    if (!element) return '';
+    const clone = element.cloneNode(true);
+    // 注入样式与脚本永不进正文
+    clone.querySelectorAll('style, script').forEach(el => el.remove());
+    const md = serializeBlock(clone).trim();
+    // 压缩 3+ 连续空行, 去掉行尾空格
+    return md.replace(/\n{3,}/g, '\n\n').split('\n').map(l => l.replace(/\s+$/, '')).join('\n');
+  }
+
   window.AIPanelDom = {
     findInputField,
     setEditorText,
@@ -461,6 +656,9 @@
     isDisabled,
     getElementText,
     getNodeLabel,
+    toMarkdown,
+    serializeTable,
+    serializeInline,
     _test: {
       scoreSubmitButton,
       dispatchInput,

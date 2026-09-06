@@ -1,0 +1,69 @@
+#!/usr/bin/env node
+// 打印某站点提取结果的原始行(带行号与长度), 用于定位换行/结构问题
+import { pathToFileURL } from "node:url";
+import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+
+const { cdp } = await import(pathToFileURL("D:/repos/aurora/scripts/cdp/cdp-helper.mjs").href);
+const argv = process.argv.slice(2);
+const site = (argv.find(a => a.startsWith('--site=')) || '').slice(7) || 'chatglm.cn';
+const SITE_FILE = {
+  'chatglm.cn': 'glm.js', 'kimi.com': 'kimi.js', 'chat.deepseek.com': 'deepseek.js',
+  'chatgpt.com': 'chatgpt.js', 'claude.ai': 'claude.js', 'gemini.google.com': 'gemini.js',
+  'grok.com': 'grok.js', 'qianwen.com': 'qianwen.js'
+};
+const src = fs.readFileSync(path.join("D:/repos/ai-roundtable/content", SITE_FILE[site]), "utf8");
+const domUtilsSrc = fs.readFileSync(path.join("D:/repos/ai-roundtable/content", "dom-utils.js"), "utf8");
+
+const EXPR = `
+(function () {
+  var DOM_UTILS_SRC = ${JSON.stringify(domUtilsSrc)};
+  var SRC = ${JSON.stringify(src)};
+  var captured = null;
+  window.AIPanelBase = {
+    boot: function () { return true; }, base64ToFiles: function () { return []; },
+    createController: function (c) { captured = c; },
+    isVisible: function () { return true; }, sleep: function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); }, _test: {}
+  };
+  // 先加载 dom-utils.js(提供 window.AIPanelDom.toMarkdown), 与 manifest 注入顺序一致
+  try { delete window.AIPanelDom; } catch (e) { window.AIPanelDom = undefined; }
+  try { (0, eval)(DOM_UTILS_SRC); } catch (e) {}
+  try { (0, eval)(SRC); } catch (e) { return JSON.stringify({ error: 'throw: ' + e.message }); }
+  if (!captured) return JSON.stringify({ error: 'no config' });
+  if (typeof captured.getLatestResponse !== 'function') {
+    captured.getLatestResponse = function () {
+      var sels = captured.responseSelectors || [];
+      for (var i = 0; i < sels.length; i++) {
+        var b = document.querySelectorAll(sels[i]);
+        if (b.length) return (b[b.length - 1].innerText || '').trim();
+      }
+      return null;
+    };
+  }
+  var out = captured.getLatestResponse() || '';
+  return JSON.stringify({ text: out });
+})();
+`;
+
+const tabs = await new Promise((res) => {
+  http.get({ host: '127.0.0.1', port: 9223, path: '/json/list' }, r => {
+    let d = ''; r.on('data', c => d += c); r.on('end', () => res(JSON.parse(d)));
+  });
+});
+const tab = tabs.find(t => t.type === 'page' && t.url.includes(site));
+if (!tab) { console.log('no tab for', site); process.exit(1); }
+const c = await cdp(tab.webSocketDebuggerUrl);
+const res = await c.cmd('Runtime.evaluate', { expression: EXPR, returnByValue: true });
+let info;
+try { info = JSON.parse(res.result?.result?.value ?? '{}'); } catch { console.log(String(res.result?.result?.value).slice(0, 300)); }
+if (info.error) { console.log('ERROR:', info.error); }
+else {
+  const lines = info.text.split('\n');
+  console.log('total chars:', info.text.length, '| lines:', lines.length);
+  lines.forEach((l, i) => {
+    if (i > 200) return;
+    console.log(String(i).padStart(3) + ' [' + String(l.length).padStart(3) + '] ' + JSON.stringify(l));
+  });
+}
+c.close();

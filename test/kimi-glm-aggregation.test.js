@@ -28,7 +28,15 @@ class FakeEl {
     this.classList = new Set(classList);
     this._text = '';
     this.attributes = {};
+    this.nodeType = 1; // Node.ELEMENT_NODE — serializeInline checks this
   }
+  // dom-utils 的序列化器遍历 childNodes(真实 DOM 含 TEXT 节点); FakeEl 把文本
+  // 存在 _text, 元素子节点在 children — childNodes 返回 children, 叶子元素的
+  // 文本由 serializeInline 的叶子兜底(textContent)读取。
+  get childNodes() { return this.children; }
+  get nodeValue() { return this._text; }
+  // dom-utils 序列化器按 tagName(大写) 分派块级处理, 真实 DOM tagName 为大写
+  get tagName() { return this.tag.toUpperCase(); }
   get className() { return Array.from(this.classList).join(' '); }
   set className(v) { this.classList = new Set(String(v).split(/\s+/).filter(Boolean)); }
   get textContent() { return this.innerText; }
@@ -135,6 +143,9 @@ function loadAdapter(rel) {
   };
   sandbox.window.window = sandbox.window;
   vm.createContext(sandbox);
+  // 与 manifest.json 注入顺序一致: 先 dom-utils.js(提供 window.AIPanelDom.toMarkdown
+  // 供 extractAnswerText 的 DOM→Markdown 序列化), 再站点适配器
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'content/dom-utils.js'), 'utf8'), sandbox, { filename: 'content/dom-utils.js' });
   vm.runInContext(fs.readFileSync(path.join(ROOT, rel), 'utf8'), sandbox, { filename: rel });
   return sandbox;
 }
@@ -213,11 +224,19 @@ function buildGlm({ withThinking = false } = {}) {
     answer.appendChild(think);
   }
 
-  // 正文容器: 非 thinking 的 answer-content-wrap, 内含多个 .markdown-body 段落
+  // 正文容器: 非 thinking 的 answer-content-wrap, 内含多个 .markdown-body 段落。
+  // 真实 DOM 里文本在段落子节点(<p>)而非容器自身 — 序列化器按块级子节点遍历,
+  // 因此 fixture 也要把文本放进 <p> 叶子。
   const body = new FakeEl('div', ['answer-content-wrap']);
   const s1 = new FakeEl('div', ['markdown-body']);
-  s1.innerText = ['基于对最新社区插件和最佳实践的调研，为 DSH 选择搜索插件……',
-                  '🏆 核心推荐插件概览'].join('\n');
+  const mkP = (parent, text) => {
+    const pEl = new FakeEl('p');
+    pEl.innerText = text;
+    parent.appendChild(pEl);
+    return pEl;
+  };
+  mkP(s1, '基于对最新社区插件和最佳实践的调研，为 DSH 选择搜索插件……');
+  mkP(s1, '🏆 核心推荐插件概览');
 
   // 对比表格: 必须转成管道行, 不能被 innerText 压成一行
   const table = new FakeEl('table');
@@ -236,14 +255,15 @@ function buildGlm({ withThinking = false } = {}) {
   body.appendChild(s1);
 
   const s2 = new FakeEl('div', ['markdown-body']);
-  s2.innerText = ['✅ 总结 对于绝大多数用户，ModSearch 是最佳起点。',
-                  '想零成本体验语义搜索，选 dsh-web-search-exa 作为备胎。'].join('\n');
+  mkP(s2, '✅ 总结 对于绝大多数用户，ModSearch 是最佳起点。');
+  mkP(s2, '想零成本体验语义搜索，选 dsh-web-search-exa 作为备胎。');
 
-  // mermaid: <pre> 源码(保留) + 渲染预览 div(剥离)
+  // mermaid: 代码块容器(源码保留, toMarkdown 输出 ```mermaid 围栏)
+  // + 渲染预览 svg(serializeInline 跳过 SVG 子树, 其图形 <text> 不进正文)
   const pre = new FakeEl('pre');
   pre.innerText = 'flowchart LR\n A[开始] --> B{需求?}\n B -- 免费 --> C[ModSearch]';
   s2.appendChild(pre);
-  const preview = new FakeEl('div', ['mermaid']);
+  const preview = new FakeEl('svg');
   preview.innerText = '开始需求?免费ModSearch';
   s2.appendChild(preview);
 

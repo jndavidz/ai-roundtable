@@ -44,7 +44,8 @@ function buildExpr(site) {
   const src = readContent(file);
   // 页面内包装: 伪造 AIPanelBase 以捕获 config
   return `(function () {
-    var SRC = ${JSON.stringify(src)};
+    var DOM_UTILS_SRC = ${JSON.stringify(domUtilsSrc)};
+  var SRC = ${JSON.stringify(src)};
     var captured = null;
     window.AIPanelBase = {
       boot: function () { return true; },
@@ -54,7 +55,10 @@ function buildExpr(site) {
       sleep: function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); },
       _test: {}
     };
-    try { (0, eval)(SRC); } catch (e) {
+    // 先加载 dom-utils.js(提供 window.AIPanelDom.toMarkdown), 与 manifest 注入顺序一致
+  try { delete window.AIPanelDom; } catch (e) { window.AIPanelDom = undefined; }
+  try { (0, eval)(DOM_UTILS_SRC); } catch (e) {}
+  try { (0, eval)(SRC); } catch (e) {
       return JSON.stringify({ site: ${JSON.stringify(site)}, error: 'content script threw: ' + e.message });
     }
     if (!captured) {

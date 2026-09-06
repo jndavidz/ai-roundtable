@@ -138,23 +138,6 @@
 
     const clone = element.cloneNode(true);
 
-    // 0) Convert <table> elements into pipe-separated rows BEFORE reading
-    //    innerText — otherwise the whole table is flattened into one run-on
-    //    line ("插件名称核心定位引擎支持…ModSearch…") that is unreadable.
-    //    A <pre> keeps newlines, so each row lands on its own line.
-    clone.querySelectorAll('table').forEach(t => {
-      const rows = [];
-      t.querySelectorAll('tr').forEach(tr => {
-        const cells = Array.from(tr.querySelectorAll('th, td'))
-          .map(c => (c.innerText || '').trim().replace(/\s+/g, ' '))
-          .filter(Boolean);
-        if (cells.length) rows.push('| ' + cells.join(' | ') + ' |');
-      });
-      const pre = document.createElement('pre');
-      pre.textContent = rows.join('\n');
-      t.replaceWith(pre);
-    });
-
     // 1) Always drop raw style/script so injected CSS blobs (mermaid diagrams,
     //    #mmd-... rules) never leak into the captured text.
     clone.querySelectorAll('style, script').forEach(el => el.remove());
@@ -177,10 +160,10 @@
       '[class*="overflow-hidden"][class*="max-h"]',
       '[data-type*="think"]',
       '[data-type*="reason"]',
-      // Rendered mermaid preview (a div with class "mermaid") duplicates the
-      // diagram source that lives in the <pre>/<code> block. Drop the preview so
-      // we keep only the flowchart source text, not the flattened node labels.
-      '[class*="mermaid"]'
+      // 注: 不再按 [class*="mermaid"] 删节点——chatglm 的 mermaid 代码容器
+      // class 是 .language.language-mermaid, 这条会连源码一起删掉(实测只剩
+      // "mermaid代码预览"标签、源码为空)。源码由 toMarkdown 的代码块分支输出;
+      // 渲染预览(svg)由 serializeInline 跳过 SVG 子树处理。
     ];
     for (const selector of noiseSelectors) {
       clone.querySelectorAll(selector).forEach(el => el.remove());
@@ -194,7 +177,20 @@
       }
     });
 
-    return clone.innerText || '';
+    // 用 DOM→Markdown 序列化取代 innerText: 保留标题层级/段落换行/代码块围栏/
+    // 表格管道行与行内链接, 避免「表格后直接贴标题」「序号被吞」「bash复制混入」
+    // 等结构丢失问题。
+    let md = window.AIPanelDom && window.AIPanelDom.toMarkdown
+      ? window.AIPanelDom.toMarkdown(clone)
+      : (clone.innerText || '');
+
+    // 兜底清理: 代码块的 UI 标签残留与 mermaid 的「代码/预览」标签
+    md = md
+      .replace(/^\s*\w*\s*(表格|复制|代码预览|代码|预览)\s*$/gmi, '')
+      .replace(/```\s*\n+```/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    return md;
   }
 
   // True when an element is (or is inside) a reasoning/thinking block. Used so a
