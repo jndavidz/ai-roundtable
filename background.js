@@ -144,6 +144,42 @@ async function handleMessage(message, sender) {
     }
 
 
+    case 'DEBUGGER_SEND': {
+      // 豆包只响应 trusted 输入(isTrusted=true, 合成 click/KeyboardEvent
+      // 全部无效——CDP 实测)。content script 经此通道用 chrome.debugger 的
+      // trusted 输入管线完成写入+发送; attach 期间该标签顶部会显示
+      // Chrome 强制的「正在调试此浏览器」横幅, detach 后消失。
+      const tabId = sender.tab?.id;
+      if (!tabId) return { success: false, error: 'no sender tab' };
+      const target = { tabId };
+      try {
+        await chrome.debugger.attach(target, '1.3');
+      } catch (err) {
+        if (!/Another debugger|already attached/i.test(err.message)) {
+          return { success: false, error: 'attach failed: ' + err.message };
+        }
+      }
+      try {
+        const key = async (type, opts) =>
+          await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', Object.assign({ type }, opts));
+        // trusted Ctrl+A + Delete 清掉残留(重试场景输入框可能有旧文本)
+        await key('keyDown', { modifiers: 2, key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65 });
+        await key('keyUp', { modifiers: 2, key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65 });
+        await key('keyDown', { key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 });
+        await key('keyUp', { key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46 });
+        await chrome.debugger.sendCommand(target, 'Input.insertText', { text: message.text });
+        await new Promise(r => setTimeout(r, 400)); // 让前端感知输入
+        await key('keyDown', { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+        await key('keyUp', { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+        await new Promise(r => setTimeout(r, 500));
+        return { success: true };
+      } catch (err) {
+        return { success: false, error: 'debugger input failed: ' + err.message };
+      } finally {
+        try { await chrome.debugger.detach(target); } catch (e) { /* already detached */ }
+      }
+    }
+
     case 'ACTIVATE_TAB':
       // 后台标签限制(gemini 等 Angular/Quill 站点在 hidden 标签里响应式更新
       // 被浏览器挂起, 点击发送无效——用户实测「只有手动点开 Gemini 标签才会

@@ -9,7 +9,8 @@
     "activeTab",
     "tabs",
     "scripting",
-    "storage"
+    "storage",
+    "debugger"
   ],
 
   "host_permissions": [

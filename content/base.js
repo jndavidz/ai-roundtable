@@ -419,6 +419,29 @@
       // diff-based new-content signal would miss it until the 10min timeout.
       const preSendContent = effectiveConfig.getLatestResponse ? (effectiveConfig.getLatestResponse() || '') : '';
 
+      if (config.debuggerSend) {
+        // 豆包等只认 trusted 输入的站点: 聚焦编辑器(定位 debugger 输入落点),
+        // hidden 时先激活, 然后由 background 用 chrome.debugger 完成写入+发送
+        inputEl.focus();
+        if (document.visibilityState === 'hidden') {
+          try { await chrome.runtime.sendMessage({ type: 'ACTIVATE_TAB' }); } catch (e0) { /* ignore */ }
+          await sleep(1500);
+          inputEl.focus();
+        }
+        const resp = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({ type: 'DEBUGGER_SEND', text }, (r) => {
+            if (chrome.runtime.lastError) resolve({ success: false, error: chrome.runtime.lastError.message });
+            else resolve(r);
+          });
+        });
+        if (!resp?.success) throw new Error('debugger send failed: ' + (resp?.error || 'unknown'));
+        await sleep(1200); // 给前端清空编辑器的时间
+        const leftover = (window.AIPanelDom.getElementText(inputEl) || '').trim();
+        if (leftover) throw new Error('debugger send did not clear the editor');
+        capture.captureResponse({ preSendContent });
+        return true;
+      }
+
       await window.AIPanelDom.setEditorText(inputEl, text, { afterInputDelay: config.afterInputDelay ?? 500 });
 
       const submitResult = await window.AIPanelDom.submitMessage(inputEl, config.submitOptions).catch(async (err) => {

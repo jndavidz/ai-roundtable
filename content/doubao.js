@@ -74,6 +74,11 @@
       '[class*="stop-generating"]'
     ],
 
+    // 豆包只响应 trusted 输入(isTrusted=true)——合成 click/KeyboardEvent
+    // 全部无效(CDP 实测)。置 true 后 base.js 走 chrome.debugger 的 trusted
+    // 输入管线(由 background 执行, 需 manifest debugger 权限)。
+    debuggerSend: true,
+
     // CDP 实测(2026-09): 新版豆包是 CSS modules hash class, 旧选择器全部失效。
     // 结构: 用户消息 container-xxx md-box-root gh-user;
     //       助手回复 container-xxx md-box-root(不带 gh-user)。
@@ -81,7 +86,15 @@
     getLatestResponse: function () {
       var boxes = document.querySelectorAll('[class*="md-box-root"]:not([class*="gh-user"])');
       if (!boxes.length) return null;
+      // 防误抓: 豆包的用户消息也渲染成 md-box-root 且不带 gh-user——回复
+      // 未生成时最后一个是刚提交的用户问题(第一次群发误抓的根因)。
+      // 跳过与输入框当前文本相同的容器。
+      var activeEditor = document.querySelector('[contenteditable="true"]');
+      var editorText = activeEditor ? (activeEditor.innerText || '').trim() : '';
       var last = boxes[boxes.length - 1];
+      if (editorText && (last.innerText || '').trim() === editorText && boxes.length > 1) {
+        last = boxes[boxes.length - 2];
+      }
       var clone = last.cloneNode(true);
       clone.querySelectorAll('style, script').forEach(function (el) { el.remove(); });
       var md = window.AIPanelDom && window.AIPanelDom.toMarkdown
