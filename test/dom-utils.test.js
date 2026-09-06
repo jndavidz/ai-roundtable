@@ -136,15 +136,26 @@ assert(
 (async () => {
   const { verifySubmissionStarted } = helpers._test;
 
-  // verifySubmissionStarted: a clicked send button that became disabled (or was
-  // removed from the DOM) counts as "submission started", even if the editor
-  // keeps the input text populated (fixes Gemini false "Submit did not start").
+  // verifySubmissionStarted P2 tightened: "button disabled/removed" alone no
+  // longer counts as submitted — hidden-tab UI re-renders replace the button
+  // node on text writes, which faked "Message sent" while the text sat unsent
+  // (doubao/gemini 实测). The button signal now requires the input to be
+  // cleared as well; the old Gemini special case is covered by the activate-
+  // and-retry path (real send clears the Quill editor).
   const stillTyped = new FakeElement({ innerText: 'hello world' });
   const disabledAfterClick = new FakeElement({ attrs: { 'aria-label': 'Send' }, disabled: true });
+  await assert.rejects(
+    verifySubmissionStarted(stillTyped, 'hello world', { verifyMaxWait: 150 }, disabledAfterClick),
+    /Submit did not start/,
+    'button disabled with text still present must NOT count as submitted'
+  );
+
+  // Combined signal: button disabled AND input cleared = real send.
+  const clearedInput = new FakeElement({ innerText: '' });
   assert.strictEqual(
-    await verifySubmissionStarted(stillTyped, 'hello world', {}, disabledAfterClick),
+    await verifySubmissionStarted(clearedInput, 'hello world', {}, disabledAfterClick),
     true,
-    'button disabled after click should count as submitted'
+    'button disabled + input cleared should count as submitted'
   );
 
   // Without the disabled signal and with unchanged text, it must keep polling
