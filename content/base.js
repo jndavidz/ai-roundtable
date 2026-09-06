@@ -427,6 +427,19 @@
         // 「只有手动点开 Gemini 标签才会激活对话」)。请求 background 激活
         // 本标签, 等页面恢复可见后重新写入并提交一次。
         if (!/Submit did not start|remained unchanged/i.test(err.message || '')) throw err;
+        // 防双发: hidden 下第一次提交可能「实际已成功」——React/Quill 的发送
+        // handler 同步执行并异步清空编辑器, 而 DOM 清空发生在验证窗口之外
+        // (节流), 验证被骗后重试会造成重复发送(gemini lastUser 双段实测)。
+        // 给异步清空 1.5s, 若输入框已空 = 已发出, 直接进入捕获, 不重发。
+        await sleep(1500);
+        try {
+          const leftover = (window.AIPanelDom.getElementText(inputEl) || '').trim();
+          if (!leftover) {
+            console.log('[AI Panel]', name, 'input already cleared after retry wait — first submit actually succeeded, skipping resend');
+            capture.captureResponse({ preSendContent });
+            return { method: 'initial-submit-confirmed-after-delay' };
+          }
+        } catch (e2) { /* read failure: continue with retry */ }
         console.log('[AI Panel]', name, 'submit failed in background tab, activating tab and retrying...');
         try { await chrome.runtime.sendMessage({ type: 'ACTIVATE_TAB' }); } catch (e2) { /* sidepanel closed etc */ }
         await new Promise((resolve) => {
