@@ -157,7 +157,9 @@
       // 由 serializeInline 的 a[href] 分支输出 [文本](来源) 链接。
       '.pua-ref-renderer:has([class*="pua-ref-article"])',
       '[class*="pua-ref-article"]',
-      '.carousel-container'
+      '.carousel-container',
+      // CDP 实测: 表格工具栏「表格 [复制][下载]」(.table-actions-content)
+      '[class*="table-actions"]'
     ];
     for (const selector of noiseSelectors) {
       clone.querySelectorAll(selector).forEach(el => el.remove());
@@ -180,6 +182,10 @@
     // 兜底清理: 代码块 UI 标签残留
     md = md
       .replace(/^\s*\w*\s*(表格|复制|代码预览|代码|预览)\s*$/gmi, '')
+      // kimi 表格工具栏「表格  复制」(两词连排, 单词条正则覆盖不到)
+      .replace(/^\s*表格\s+复制\s*$/gm, '')
+      // 工具调用徽标行(kimi 流式工具栏的文本形态): article🛠web_search:3#11…🎨
+      .replace(/^[^\n]*🛠web_search:\d+[^\n]*$/gm, '')
       .replace(/```\s*\n+```/g, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
