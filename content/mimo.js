@@ -91,7 +91,7 @@
         : (clone.innerText || '');
       md = md
         .replace(/^\s*\w*\s*(表格|复制|下载|代码预览|代码|预览)\s*$/gmi, '')
-        .replace(/^\s*已深度思考\s*$/gm, '') // mimo 思考标记残留
+        .replace(/^\s*已深度思考[^\n]*$/gm, '') // mimo 思考标记残留(含「(用时 7.3 秒)」注解)
         .replace(/```\s*\n+```/g, '')
         .replace(/\n{3,}/g, '\n\n')
         .trim();

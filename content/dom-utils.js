@@ -576,9 +576,16 @@
       ? el.className.baseVal : el.className) || '';
     let lang = '';
     const langEl = el.querySelector('.language, [class*="language-"]');
-    if (langEl) lang = (langEl.innerText || '').trim();
-    else {
-      const m = /language-(\w+)/.exec(String(cls));
+    if (langEl && (langEl.innerText || '').trim().length <= 15 && (langEl.innerText || '').indexOf('\n') < 0) {
+      // 短单行元素才是语言标签(如 <p class="language">bash</p>)
+      lang = langEl.innerText.trim();
+    }
+    if (!lang) {
+      // 语言 class 挂在 code/pre 自身是 hljs 惯例(<code class="language-bash">,
+      // 此时 langEl 就是整个内容载体——豆包实测 lang 被填成整段代码文本,
+      // 代码输出两遍), 从 class 解析 language-xxx
+      const codeEl0 = el.querySelector('code, pre') || el;
+      const m = /language-([\w+-]+)/.exec(String(codeEl0.className || '') + ' ' + String(cls));
       if (m) lang = m[1];
     }
     // 行号(qianwen 用 react-syntax-highlighter 的 .linenumber)是 UI 不进正文
