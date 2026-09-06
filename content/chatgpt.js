@@ -99,8 +99,9 @@
     // "assistant"] 最后块, 经 DOM→Markdown 序列化(表格管道行/引用链接/代码围栏/
     // 标题分级), 旧版多块 innerText 拼接会把块间都插空行(实测 902 行碎块)。
     extractNoiseSelectors: [
-      '[data-testid*="citation"]',
-      '[class*="citation"]'
+      // 不用 [class*="citation"] 模糊匹配——citation 类可能承载正文文本
+      // (gemini 的教训); data-testid 是行为标记, 误删风险低
+      '[data-testid*="citation"]'
     ],
 
 

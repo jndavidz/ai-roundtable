@@ -76,10 +76,9 @@
     // 经 DOM→Markdown 序列化。chat-history/upgrade 标题在容器外, 不会被抓入。
     extractNoiseSelectors: [
       // 注意: 不能用 [class*="citation"]——gemini 正文文本全在 span.citation-7
-      // 里, 剥掉它们等于删正文(实测输出 ****`` 且整句丢失)。只剥真正的来源
-      // 卡片元素(自定义标签, 不承载正文):
-      'sources-carousel-inline',
-      'source-inline-chip'
+      // 里, 剥掉它们等于删正文(实测输出 ****`` 且整句丢失)。
+      // sources-carousel-inline / source-inline-chip 也不剥: chip 是行内引用
+      // 载体(来源名在 aria-label), 由 serializeInline 输出 [来源名] 标记
     ],
 
 

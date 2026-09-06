@@ -492,6 +492,16 @@
           continue;
         }
       }
+      // gemini 来源 chip: <source-inline-chip> 无 <a>(来源 URL 惰性加载,
+      // DOM 里只有来源名), button[aria-label] 含「查看来自“X”的引用」——
+      // 输出 [X] 文本标记保住「此处有引用」的语义, 而非整块丢弃
+      if (tag === 'SOURCE-INLINE-CHIP') {
+        const btn = child.querySelector('button[aria-label]');
+        const label = (btn ? btn.getAttribute('aria-label') : '') || '';
+        const mm = /查看来自[“"](.+?)[”"]的引用/.exec(label);
+        out += mm ? '[' + mm[1] + ']' : '';
+        continue;
+      }
       if (tag === 'A' && child.getAttribute('href')) {
         let t = (child.innerText || '').trim();
         let href = child.getAttribute('href');
@@ -499,9 +509,12 @@
         // 去掉包围的破折号, 输出 [4](来源)
         if (/^[-–—\s]*\d+[-–—\s]*$/.test(t)) t = t.replace(/[-–—\s]/g, '');
         // 坏 href 防御(kimi 的 markdown 解析 bug 会把 ** / 空格 / [..] 塞进
-        // href): URL 不应含裸空格, 超长也视为损坏 —— 丢弃整个引用(该 a 是
-        // 空锚, 丢弃无正文损失), 避免整段英文源码混进正文
-        if (/\s/.test(href) || href.length > 300) { out += t || ''; continue; }
+        // href 的 text-fragment 段): URL 主体(# 之前)仍是干净的来源链接 ——
+        // 截断到空格前并砍掉坏 fragment, 而不是整条丢弃(用户要求引用必须保留)
+        if (/\s/.test(href)) {
+          href = href.split(/\s/)[0].replace(/#:~:text=.*$/, '');
+        }
+        if (!href || href.length > 300) { out += t || ''; continue; }
         // kimi 空锚角标: 文本为空但有 data-site-name(如 "Github"/"exa.ai"),
         // 兜底再从 href 提取域名 —— 统一输出 [来源名](链接)
         if (!t) {
