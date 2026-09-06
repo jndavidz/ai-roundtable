@@ -63,37 +63,22 @@
     },
 
     responseSelectors: [
-      '.model-response-text',
-      'message-content'
+      // message-content 优先: 它是完整回复容器, 含 table-block-component 表格;
+      // .model-response-text 只是其中的纯文本部分, 用它表格会丢(实测 1722 字大段)
+      'message-content',
+      '.model-response-text'
     ],
 
     // Gemini has no reliable streaming indicator; rely on content-stability
     // detection (no streamingSelectors => streaming signal is always false).
 
-    getLatestResponse: function() {
-      // Gemini uses .model-response-text for AI responses
-      const messages = document.querySelectorAll('.model-response-text');
+    // getLatestResponse 已删除: base.js 默认派生取 .model-response-text 最后块
+    // 经 DOM→Markdown 序列化。chat-history/upgrade 标题在容器外, 不会被抓入。
+    extractNoiseSelectors: [
+      '[class*="sources"]',
+      '[class*="citation"]'
+    ],
 
-      if (messages.length > 0) {
-        const lastMessage = messages[messages.length - 1];
-        // Use innerText to preserve line breaks
-        const content = lastMessage.innerText.trim();
-        console.log('[AI Panel] Gemini response found, length:', content.length);
-        return content;
-      }
-
-      // Fallback to message-content
-      const fallback = document.querySelectorAll('message-content');
-      if (fallback.length > 0) {
-        const lastMessage = fallback[fallback.length - 1];
-        const content = lastMessage.innerText.trim();
-        console.log('[AI Panel] Gemini response (fallback), length:', content.length);
-        return content;
-      }
-
-      console.log('[AI Panel] Gemini: no response found');
-      return null;
-    },
 
     // File injection for Gemini. Gemini's UI changes frequently, so try the
     // supported browser surfaces in order: file input, paste, then drop.

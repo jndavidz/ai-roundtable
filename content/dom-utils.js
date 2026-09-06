@@ -551,6 +551,10 @@
       const m = /language-(\w+)/.exec(String(cls));
       if (m) lang = m[1];
     }
+    // 行号(qianwen 用 react-syntax-highlighter 的 .linenumber)是 UI 不进正文
+    el.querySelectorAll('[class*="line-number"], [class*="linenumber"]')
+      .forEach(n => n.remove());
+
     // 代码内容通常在 <code> 或 <pre> 内; 去掉顶栏(.top/.top-outer)。
     // mermaid 等渲染块可能没有 <code>, 回退 <pre> 再回退自身。
     const codeEl = el.querySelector('code') || el.querySelector('pre') || el;
@@ -577,6 +581,12 @@
       return '#'.repeat(level) + ' ' + serializeInline(el).trim();
     }
     if (tag === 'TABLE') return serializeTable(el);
+    // 自定义表格容器(gemini .table-block-component 等): 内部找 <table> 复用
+    // 表格序列化, 否则整块会被当普通容器拉平成一行
+    if (/table-block|data-table|table-wrapper/.test(String(cls))) {
+      const inner = el.querySelector('table');
+      if (inner) return serializeTable(inner);
+    }
     // 代码块判定: 只有 <pre> 或 class 明确是代码容器才当代码块。
     // 不能仅凭「内部含 <code>」判断——正文容器里也嵌着代码块, 那样会把
     // 整个正文误判成代码(实测只剩 ```bash ... ``` 三行)。

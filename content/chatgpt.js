@@ -95,61 +95,14 @@
       return null;
     },
 
-    getLatestResponse: function() {
-      // Strategy: find the assistant message container first, then extract ALL text content
-      // This handles ChatGPT's evolving UI where content may be in .markdown, canvas boxes,
-      // code blocks, or other nested containers
+    // getLatestResponse 已删除: base.js 默认派生取 [data-message-author-role=
+    // "assistant"] 最后块, 经 DOM→Markdown 序列化(表格管道行/引用链接/代码围栏/
+    // 标题分级), 旧版多块 innerText 拼接会把块间都插空行(实测 902 行碎块)。
+    extractNoiseSelectors: [
+      '[data-testid*="citation"]',
+      '[class*="citation"]'
+    ],
 
-      // Step 1: Find all assistant message containers
-      const containerSelectors = [
-        '[data-message-author-role="assistant"]',
-        '[data-testid*="conversation-turn"]:has([data-message-author-role="assistant"])',
-        '.agent-turn'
-      ];
-
-      let containers = [];
-      for (const selector of containerSelectors) {
-        containers = document.querySelectorAll(selector);
-        if (containers.length > 0) break;
-      }
-
-      if (containers.length === 0) return null;
-
-      const lastContainer = containers[containers.length - 1];
-
-      // Step 2: Collect text from all content areas within the container
-      // Try to get structured content first (markdown + canvas/text boxes)
-      const contentParts = [];
-
-      // Markdown sections
-      const markdownEls = lastContainer.querySelectorAll('.markdown, [class*="markdown"]');
-      // Canvas/text box sections (ChatGPT wraps some content in bordered containers)
-      const canvasEls = lastContainer.querySelectorAll('[class*="canvas"], [class*="text-block"], [class*="code-block"], pre code');
-
-      if (markdownEls.length > 0 || canvasEls.length > 0) {
-        // Collect from markdown blocks
-        markdownEls.forEach(el => {
-          const text = el.innerText.trim();
-          if (text) contentParts.push(text);
-        });
-        // Collect from canvas/text-box blocks not already inside markdown
-        canvasEls.forEach(el => {
-          // Skip if this element is inside a markdown container we already captured
-          if (el.closest('.markdown, [class*="markdown"]')) return;
-          const text = el.innerText.trim();
-          if (text) contentParts.push(text);
-        });
-      }
-
-      // Step 3: If structured selectors found content, use it; otherwise fall back to full container text
-      if (contentParts.length > 0) {
-        return contentParts.join('\n\n').trim();
-      }
-
-      // Fallback: get the full innerText of the assistant container
-      // This catches any new UI elements ChatGPT might add
-      return lastContainer.innerText.trim();
-    },
 
     // File injection using DataTransfer API (input field, then drag-drop fallback)
     injectFiles: async function(filesData) {

@@ -302,17 +302,42 @@
 
   // ===== Controller factory =====
 
-  // Default response extractor: walk the selector list in order and return
-  // the last matching block. Nine of the twelve site adapters use exactly
-  // this shape, so adapters only need a custom getLatestResponse when they do
+  // Default response extractor: walk the selector list in order and take the
+  // last matching block. Nine of the twelve site adapters use exactly this
+  // shape, so adapters only need a custom getLatestResponse when they do
   // something extra (thinking-block filtering, multi-part joins, ...).
-  function makeDefaultGetLatestResponse(responseSelectors) {
+  //
+  // When dom-utils is present (manifest injects it first) the block is run
+  // through the DOM→Markdown serializer: tables become pipe rows, citations
+  // become [text](href) links, code blocks become fenced blocks, headings and
+  // paragraphs keep their line structure. Adapters can declare
+  // extractNoiseSelectors to strip site-specific noise (badges, action bars)
+  // from the clone before serialization.
+  function serializeExtract(node, noiseSelectors) {
+    const clone = node.cloneNode(true);
+    clone.querySelectorAll('style, script').forEach(el => el.remove());
+    (noiseSelectors || []).forEach(sel => {
+      try { clone.querySelectorAll(sel).forEach(el => el.remove()); } catch (e) { /* bad selector: skip */ }
+    });
+    let md = window.AIPanelDom.toMarkdown(clone);
+    return md
+      .replace(/^\s*\w*\s*(表格|复制|下载|代码预览|代码|预览)\s*$/gmi, '')
+      .replace(/```\s*\n+```/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  function makeDefaultGetLatestResponse(responseSelectors, noiseSelectors) {
     return function () {
       for (const selector of responseSelectors) {
         const blocks = document.querySelectorAll(selector);
-        if (blocks.length > 0) {
-          return blocks[blocks.length - 1].innerText.trim();
+        if (blocks.length === 0) continue;
+        const node = blocks[blocks.length - 1];
+        if (window.AIPanelDom && window.AIPanelDom.toMarkdown) {
+          const md = serializeExtract(node, noiseSelectors);
+          if (md) return md;
         }
+        return node.innerText.trim();
       }
       return null;
     };
@@ -329,7 +354,7 @@
       ...config,
       getLatestResponse: config.getLatestResponse ||
         ((config.responseSelectors && config.responseSelectors.length > 0)
-          ? makeDefaultGetLatestResponse(config.responseSelectors)
+          ? makeDefaultGetLatestResponse(config.responseSelectors, config.extractNoiseSelectors)
           : null),
       streamingSelectors: config.streamingSelectors ||
         config.submitOptions?.submittingSelectors

@@ -101,11 +101,17 @@
         t.replaceWith(pre);
       });
 
-      const text = (clone.innerText || '')
-        .replace(/\s*\d+\s*sources\s*$/i, '') // 去掉尾部「65 sources」计数
-        .replace(/\n\s*\d+\s*sources\s*(?=\n)/gi, '\n') // 去掉独立成行的 sources
+      // DOM→Markdown 序列化(表格管道行/引用链接/代码围栏), 再清理 sources 计数
+      let md = window.AIPanelDom && window.AIPanelDom.toMarkdown
+        ? window.AIPanelDom.toMarkdown(clone)
+        : (clone.innerText || '');
+      md = md
+        .replace(/\s*\d+\s*sources\s*$/i, '') // 尾部「65 sources」计数
+        .replace(/\n\s*\d+\s*sources\s*(?=\n)/gi, '\n') // 独立成行的 sources
+        .replace(/^\s*\w*\s*(表格|复制|下载|代码预览|代码|预览)\s*$/gmi, '')
+        .replace(/\n{3,}/g, '\n\n')
         .trim();
-      return text || null;
+      return md || null;
     }
   });
 })();

@@ -108,8 +108,17 @@
         // Join ALL non-thinking blocks: a single reply often spans several
         // markdown blocks (text + table + code section), and returning only
         // the last one silently dropped the rest of the answer.
+        // CDP 实测 2026-09: 每块经 DOM→Markdown 序列化(表格管道行/引用链接/
+        // 代码围栏/标题分级), 取代会压扁结构的 innerText。
         return responseBlocks
-          .map(block => block.innerText.trim())
+          .map(block => {
+            if (!(window.AIPanelDom && window.AIPanelDom.toMarkdown)) {
+              return block.innerText.trim();
+            }
+            const clone = block.cloneNode(true);
+            clone.querySelectorAll('style, script').forEach(el => el.remove());
+            return window.AIPanelDom.toMarkdown(clone).trim();
+          })
           .filter(Boolean)
           .join('\n\n');
       }

@@ -52,6 +52,13 @@
       '[aria-label*="停止"]',
       '[aria-label*="Stop"]',
       '[class*="stop-generating"]'
+    ],
+
+    // CDP 实测(qianwen.com 2026-09): 表格工具栏「表格 下载为表格 导出为图片」
+    // 是 UI 不进正文; 代码块 banner(「bash 编辑」)与行号由序列化器处理
+    extractNoiseSelectors: [
+      '[class*="qk-md-table-action"]',
+      '.qk-md-table-download-wrapper'
     ]
 
     // getLatestResponse omitted — base.js derives it from responseSelectors.
