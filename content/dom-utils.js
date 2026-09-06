@@ -435,10 +435,15 @@
         return true;
       }
 
-      // Priority 2: the clicked send button became disabled or was removed
-      // from the DOM — the click registered even when the site's editor keeps
-      // the input text populated (e.g. Gemini keeps a hidden textarea filled).
-      if (button && (!document.contains(button) || isDisabled(button))) return true;
+      // Priority 2 REMOVED: "button disappeared/disabled" alone used to fake
+      // success on hidden tabs — writing text triggers a UI re-render that
+      // replaces the button node (doubao/gemini 实测误报 Message sent 而
+      // 输入框残留), and the real confirmation (input cleared) is P3.
+      // Keep a combined signal only: button gone AND input cleared.
+      if (button && !document.contains(button)) {
+        const curNow = getElementText(inputEl).trim();
+        if (!curNow) return true;
+      }
 
       // Priority 3: check if input text was CLEARED (all sites empty the
       // editor on real send). Note: text "changed but non-empty" is NOT a

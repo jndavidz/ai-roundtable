@@ -438,7 +438,9 @@
             }
           };
           document.addEventListener('visibilitychange', onVis);
-          setTimeout(resolve, 2500); // 兜底: visibility 事件没来也继续
+          // 兜底加长: 窗口还原+聚焦需要时间, 2.5s 实测不够(hidden 下重试
+          // 依然无效, 豆包/gemini 输入框残留即此)
+          setTimeout(resolve, 8000);
         });
         // 激活后重新写入: gemini 的编辑器是 Quill(hidden 时 model 不同步,
         // 这是发送无效的深层原因), 优先用 Quill 实例 API 保证 model 同步;

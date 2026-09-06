@@ -104,16 +104,21 @@ async function handleMessage(message, sender) {
       const deadline = Date.now() + 60000;
       let tabId = null;
       while (Date.now() < deadline) {
-        const probe = await checkAIConnection(aiType);
-        if (!probe.connected) {
+        // 已创建过则直接用该 tab 检查 —— 首次加载的重定向(chatgpt 登录检查、
+        // grok -> accounts.x.ai)会让 hostname 匹配瞬间失败, 重查会误判
+        // 「不存在」而再建一个(实测 chatgpt/grok 双标签)。
+        if (tabId !== null) {
+          try {
+            const inputCheck = await chrome.tabs.sendMessage(tabId, { type: 'CHECK_INPUT' });
+            if (inputCheck?.ready) return { success: true };
+          } catch (err) { /* content script not injected yet */ }
           await new Promise(r => setTimeout(r, 1500));
           continue;
         }
-        // Content script alive is not enough for a fresh SPA tab: the
-        // composer mounts seconds after our injection (chatgpt/grok 实测
-        // ping 通但输入框未渲染 -> 群发同秒失败)。就绪 = 输入框已存在。
-        try {
-          if (!tabId) {
+        const probe = await checkAIConnection(aiType);
+        if (probe.connected) {
+          // 已有可用标签(之前就开着) —— 找到它的 id 后走同一就绪检查
+          try {
             const tabsNow = await chrome.tabs.query({});
             const patterns = AI_URL_PATTERNS[aiType] || [];
             const match = tabsNow.find(t => {
@@ -123,12 +128,16 @@ async function handleMessage(message, sender) {
               } catch (e) { return false; }
             });
             tabId = match ? match.id : null;
-          }
-          if (tabId) {
-            const inputCheck = await chrome.tabs.sendMessage(tabId, { type: 'CHECK_INPUT' });
-            if (inputCheck?.ready) return { success: true };
-          }
-        } catch (err) { /* not ready yet, keep polling */ }
+            if (tabId) continue;
+          } catch (err) { /* fall through */ }
+        }
+        // 尚无该站标签 —— 创建(仅一次, tabId 记忆后不再重查)
+        try {
+          const t = await chrome.tabs.create({ url: home, active: false });
+          tabId = t.id;
+        } catch (err) {
+          return { success: false, error: err.message };
+        }
         await new Promise(r => setTimeout(r, 1500));
       }
       return { success: false, error: 'timeout waiting for ' + aiType + ' composer to become ready' };
