@@ -24,3 +24,7 @@ node_modules/
 
 # Build artifacts
 *.zip
+
+# 2026-09-08: env 凭证防上车
+.env
+.env.local
