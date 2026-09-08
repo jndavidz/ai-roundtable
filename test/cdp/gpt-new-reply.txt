@@ -1,0 +1,627 @@
+结论
+
+截至 2026-09-06，如果你的目标是把 DeepSeek Harness（DSH）打造成一个稳定、低维护、以通用联网检索和资料研究为主的 Agent，我更推荐 ModSearch。
+
+如果你的重点是中文互联网深度检索、GitHub/B站/YouTube/V2EX/小红书/知乎等平台定向搜索、登录态网页、Playwright 动态页面以及长期缓存/历史复用，则 dsh-web-search-pro 的能力明显更宽。
+
+我的综合判断：
+
+默认首选：ModSearch
+专业型/重度网页采集：dsh-web-search-pro
+如果只能二选一装在你的 DSH 上，我倾向 ModSearch。
+
+置信度：高。核心功能和 DSH 集成方式均已通过两个项目的 GitHub 源码/README，以及当前插件目录交叉核实；但没有找到双方在完全相同测试集上的独立基准测试，所以不能把“搜索质量谁绝对更高”当作已验证事实。
+
+1. 两者本质上不是完全同一种产品
+维度	ModSearch	dsh-web-search-pro
+定位	搜索基础设施/搜索桥	综合 Web Research / Browser 工具箱
+核心目标	给模型提供可靠的搜索、抓页、X 搜索	尽可能覆盖不同网站和复杂网页
+DSH 集成	原生接管 web_search provider	自己增加一套搜索工具
+通用搜索	强	强
+多搜索引擎	有，自动 fallback	有，可顺序/并行 + RRF
+单页阅读	read_page	web_fetch_pro
+X/Twitter	Grok Build	平台搜索体系
+GitHub 专项搜索	间接依赖通用搜索	专用后端
+B站	通用搜索	专用后端
+YouTube	通用搜索	专用后端
+V2EX	通用搜索	专用后端
+小红书/知乎/微博等	非核心	重点能力
+Playwright	非核心	核心能力之一
+登录态	非核心	支持
+页面截图/HTML 快照	无	有
+SQLite 持久缓存	无	有
+搜索历史	基础输出，不以历史库为核心	有
+按站规则	无	有
+自定义网站	较弱	很强
+依赖复杂度	低	高
+维护成本	低	中/高
+更适合	AI Agent 搜索	Web Research / 爬取型 Agent
+
+dsh-web-search-pro 当前 README 描述的是多引擎、20+ 平台、SQLite/LRU 缓存、Playwright、按站提取规则等能力；其当前目录信息显示版本已经到 0.1.11。
+GitHub
++1
+
+ModSearch 当前 npm package.json 已是 5.9.1，架构则明显更强调 provider abstraction、统一输出和故障转移。
+GitHub
++1
+
+2. 最大区别：ModSearch 是“搜索层”，Pro 是“浏览器研究层”
+
+这是我认为最重要的选型判断。
+
+ModSearch
+
+ModSearch 的架构非常克制：
+
+DSH → web_search → ModSearch provider → [Antigravity | Tavily | Exa | Firecrawl] → 结构化证据
+
+另外提供：
+
+DSH → x_search → Grok Build
+
+以及：
+
+DSH → read_page → 单 URL → 结构化页面证据
+
+它甚至直接把 DSH 原生 web_search 的 provider seam 接管掉，因此模型看到的仍然是 DSH 原生搜索体系和引用卡片。
+GitHub
++1
+
+这意味着它的设计思想是：
+
+尽量不改变 DSH，只把搜索后端换得更好。
+
+这非常适合 Agent。
+
+dsh-web-search-pro
+
+它的思路完全不同：
+
+DSH → web-search-pro → [搜索引擎 | 专用平台 | HTTP | Jina | Playwright | OpenCLI] → 缓存/历史/规则 → Agent
+
+它实际上已经接近一个小型 Web Research Framework。
+
+例如：
+
+搜 GitHub
+
+搜 B站
+
+搜 YouTube
+
+搜 V2EX
+
+搜 Reddit
+
+搜 X/Twitter
+
+搜小红书
+
+搜知乎
+
+搜微博
+
+搜豆瓣
+
+搜贴吧
+
+搜抖音
+
+搜快手
+
+抓动态网页
+
+使用登录态
+
+页面截图
+
+HTML 保存
+
+自定义站点规则
+
+这些都是它明确设计进去的能力。
+GitHub
++1
+
+所以它不是简单的“另一个搜索插件”。
+
+更准确地说：
+
+ModSearch ≈ Search Middleware
+dsh-web-search-pro ≈ Search + Browser + Scraper
+
+3. 搜索质量：不能简单说谁更强
+
+这是两个项目最容易被误判的地方。
+
+ModSearch 的优势
+
+它的核心优势不是“拥有最多搜索源”，而是搜索链路非常清晰。
+
+目前支持：
+
+Antigravity CLI
+
+Tavily
+
+Exa
+
+Firecrawl
+
+Grok/X
+
+HTTP/local fetch
+
+并且具有自动 fallback。
+GitHub
++1
+
+例如：
+
+搜索 → 首选引擎失败 → fallback → 第二引擎 → 再失败 → 第三引擎
+
+而且它把 search、fetch、social 三种任务拆成不同角色，而不是把所有 provider 混成一个大池子。这个架构设计是比较合理的。
+GitHub
+
+dsh-web-search-pro 的优势
+
+它更强调多引擎融合。
+
+当前配置支持：
+
+ddg → bing → exa → seam → jina
+
+也可以打开并行搜索，再通过 RRF（Reciprocal Rank Fusion） 融合结果。
+GitHub
++1
+
+所以理论上：
+
+查询 → 多引擎并行 → RRF → 去重/排序 → 返回
+
+对于需要尽可能扩大召回率的 Research Agent，这种机制很有价值。
+
+但这里有一个关键限制
+
+我没有找到截至今天足够可信的第三方 benchmark，能够证明：
+
+“dsh-web-search-pro 的搜索结果质量 > ModSearch”
+
+或者反过来。
+
+因此不能把“RRF 多引擎”直接等价成“搜索质量一定更高”。
+
+我的评价：
+
+项目	ModSearch	Pro
+搜索架构成熟度	★★★★★	★★★★☆
+搜索召回潜力	★★★★☆	★★★★★
+结果融合	★★★★☆	★★★★★
+结构化证据	★★★★★	★★★★☆
+已验证程度	较高	中等
+4. 真正拉开差距的是“平台搜索”
+
+这一项我明显倾向 dsh-web-search-pro。
+
+例如你问：
+
+“B站上有哪些关于某个 NAS 软件的实测视频？”
+
+普通搜索：
+
+搜索引擎 → B站页面
+
+而 Pro 可以：
+
+查询 → B站专用 backend → B站结果
+
+类似地，它针对 GitHub、YouTube、V2EX 等都有专门后端。
+GitHub
++1
+
+更进一步，它可以使用 Playwright 登录态访问部分中文平台。
+
+项目明确说明：
+
+知乎、微博、豆瓣、贴吧、抖音、快手等公开接口受到风控，因此采用 Playwright + 登录态。
+GitHub
+
+这已经不是普通的“搜索插件”了，而是：
+
+搜索 → 浏览器 → 网站交互 → 内容提取
+
+因此，如果你的任务经常涉及：
+
+小红书
+
+B站
+
+YouTube
+
+V2EX
+
+GitHub
+
+Reddit
+
+中文社区
+
+登录后才能看的内容
+
+那么 Pro 的优势非常明显。
+
+5. 动态网页处理：Pro 明显领先
+
+这是第二个非常重要的差距。
+
+ModSearch 的 read_page 更接近：
+
+URL → 抓取 → 提取正文 → 结构化证据
+
+它甚至明确强调 SSRF 防护，并且默认阻止 private/reserved network。
+GitHub
+
+而 Pro：
+
+URL → Jina → HTTP + 规则抽取 → Playwright → HTML/文本/截图
+
+也就是说，遇到：
+
+静态 HTML
+    → HTTP 足够
+
+正文复杂
+    → Jina
+
+需要 JS
+    → Playwright
+
+需要登录
+    → Playwright + storageState
+
+需要保存网页状态
+    → snapshot
+
+这使 Pro 更适合现代 SPA、动态站点和需要浏览器执行 JavaScript 的网页。
+
+6. 缓存与长期 Research：Pro 更强
+
+Pro 明确提供：
+
+内存 LRU
+
+SQLite
+
+TTL
+
+search history
+
+replay
+
+snapshot
+
+cache clear
+
+statistics
+
+甚至可以通过历史 queryId replay 之前的结果。
+GitHub
++1
+
+这对长时间运行的 Agent 很有价值。
+
+例如：
+
+研究任务 → 100 次搜索 → SQLite 保存 → 第二次任务复用 → 减少重复请求
+
+ModSearch 更强调：
+
+一次搜索 → 获得高质量结构化证据 → 交给 LLM
+
+因此：
+
+场景	更适合
+临时问答	ModSearch
+Coding Agent	ModSearch
+深度 Research	Pro
+重复检索	Pro
+长期知识采集	Pro
+Web Scraping	Pro
+7. ModSearch 有一个很重要的优势：复杂度低
+
+这一点我反而认为经常被低估。
+
+ModSearch 的 DSH 插件本身非常薄：
+
+DSH → provider registration → ModSearch CLI
+
+官方代码说明其 DSH bundle 本身不依赖 DSH package，而是通过本地 CLI 工作，并且插件层只负责 provider 注册和两个额外工具。
+GitHub
+
+而 Pro 引入了：
+
+dsh-browser
+
+Playwright
+
+Chromium
+
+OpenCLI
+
+多平台 backend
+
+SQLite
+
+平台规则
+
+登录态
+
+外部工具
+
+例如其浏览器层本身就是独立的 dsh-browser，为 Pro 提供 Playwright/OpenCLI 浏览器服务。
+GitHub
+
+因此：
+
+功能越多 ≠ 稳定性越高。
+
+依赖链：
+
+Pro → dsh-browser → Chromium/Playwright → 网站 → 登录态 → 平台规则
+
+任何一层发生变化，都可能影响最终能力。
+
+8. DSH 集成方式：ModSearch 更漂亮
+
+这是我给 ModSearch 较高评价的重要原因。
+
+ModSearch 不是简单增加：
+
+web_search_pro
+
+而是直接把：
+
+DSH native web_search
+
+的 provider 替换成自己的搜索链。
+
+这样：
+
+模型 → 原生 web_search → ModSearch
+
+而不是：
+
+模型 → 选择第三方 web_search_pro → 第三方 schema
+
+这减少了模型需要学习的工具数量。
+
+而 Pro 则暴露多个独立工具，例如：
+
+web_search_pro
+
+web_fetch_pro
+
+web_platform_search
+
+web_snapshot
+
+web_history
+
+web_cache_clear
+
+web_search_stats
+
+web_rule
+
+web_deps
+
+当前目录资料已经显示其工具体系进一步扩展到了 11 个左右。
+GitHub
++1
+
+对于 Agent 来说，这会产生一个现实问题：
+
+工具越多，模型工具选择错误的机会也越多。
+
+尤其 DeepSeek Harness 本身就是 Agent framework。
+
+9. 免费性：ModSearch 更有优势，但不是“无限免费”
+
+这里需要纠正一个容易产生误解的地方。
+
+ModSearch 当前的默认方案是：
+
+Antigravity CLI → 不需要 API key
+
+另外可以使用：
+
+Tavily
+
+Exa
+
+Firecrawl
+
+并且项目 README 声称这些都有免费额度。
+GitHub
++1
+
+但 Antigravity 本身存在额度/策略限制，因此不能理解成：
+
+“永久免费无限搜索”。
+
+项目 changelog 也明确记录了它此前的 Gemini CLI 免费通道停止后迁移到 Antigravity 的过程。
+GitHub
+
+Pro 则更依赖：
+
+DDG
+
+Bing
+
+Exa
+
+Jina
+
+DeepSeek seam
+
+具体免费程度取决于实际 backend。
+
+因此如果你的原则是：
+
+尽量零 API Key、零付费
+
+我仍然倾向 ModSearch。
+
+10. 对你的使用场景，我会怎么选
+
+结合你之前对 DeepSeek Harness 搜索插件的需求，你实际上不是单纯想找一个“能搜网页”的插件，而是希望 DSH 能承担：
+
+最新资料搜索
+
+GitHub 项目研究
+
+软件/插件比较
+
+技术方案调查
+
+AI 模型最新信息
+
+家庭影音/网络设备资料
+
+长网页阅读
+
+多来源交叉验证
+
+这种场景下，我建议：
+
+第一选择：ModSearch
+
+架构：
+
+DeepSeek Harness → ModSearch → [Antigravity | Tavily | Exa | Firecrawl] → structured evidence → DeepSeek
+
+原因是：
+
+工具面更干净
+
+DSH 原生 web_search 可以直接接管
+
+结构化 evidence 非常适合 LLM
+
+自动 fallback
+
+X 搜索是额外优势
+
+单页读取能力完整
+
+依赖明显少于 Pro
+
+更像一个“基础设施组件”，而不是一个大型 Web Scraper
+
+第二选择：dsh-web-search-pro
+
+如果你的工作模式变成：
+
+“让 DeepSeek 自己到处找资料、打开网页、访问社区、看 B站、看 GitHub、执行浏览器操作、保存结果。”
+
+那么应该换成：
+
+dsh-web-search-pro
+
+尤其是：
+
+中文互联网 Research → Pro
+
+网站定向采集 → Pro
+
+动态网页 → Pro
+
+登录态网页 → Pro
+
+长期缓存 → Pro
+
+11. 最终评分
+
+这里的分数是我的架构选型评分，不是项目官方 benchmark。
+
+能力	ModSearch	dsh-web-search-pro
+通用 Web Search	9.2	8.8
+搜索稳定性	9.3	8.2
+Failover	9.5	8.7
+结构化证据	9.5	8.5
+DSH 原生集成	9.7	8.4
+工具简洁度	9.7	6.8
+零配置/低维护	9.2	7.0
+多引擎融合	8.5	9.3
+平台专项搜索	6.5	9.8
+中文互联网	6.5	9.5
+动态网页	7.5	9.5
+Playwright	5.5	9.7
+登录态	5.5	9.5
+缓存/历史	6.5	9.5
+Web Scraping	6.5	9.6
+综合 Research	8.7	9.4
+综合推荐	9.2	8.9
+
+这里出现一个看似矛盾的结果：
+
+Pro 的功能分更高，但我仍然推荐 ModSearch 作为默认插件。
+
+原因是两者评价目标不同。
+
+Pro 赢在能力上限；ModSearch 赢在作为 DSH 基础搜索层的工程取舍。
+
+12. 我的最终选型
+你的目标	推荐
+只装一个	ModSearch
+DeepSeek Harness 日常使用	ModSearch
+AI 技术资料研究	ModSearch
+Coding Agent	ModSearch
+GitHub 普通搜索	ModSearch
+X/Twitter Research	ModSearch
+低维护	ModSearch
+尽量免费	ModSearch
+B站深度搜索	Pro
+小红书/知乎等	Pro
+YouTube 专项检索	Pro
+V2EX 专项检索	Pro
+登录态网站	Pro
+JS 动态网页	Pro
+Playwright	Pro
+网页采集	Pro
+长期缓存/历史	Pro
+Research Agent	Pro
+Web Scraper Agent	Pro
+最终建议
+
+如果你现在准备给自己的 DeepSeek Harness 只装一个搜索插件，我建议装 ModSearch。
+
+它更适合作为：
+
+DSH 的基础联网层
+
+而不是把 DSH 直接变成一个复杂的浏览器爬虫平台。
+
+如果以后发现你的实际任务经常出现“指定网站搜索 + 动态网页 + 登录态 + B站/小红书/知乎 + 页面截图/提取”，再考虑 Pro。
+
+还有一个重要的现实因素：dsh-web-search-pro 创建于 2026-08-13 左右，目前仍属于非常新的项目，虽然更新活跃、能力增长很快，但其生态成熟度不能直接和 ModSearch 的稳定性假设等同。当前目录显示 Pro 最近版本为 0.1.11，而 ModSearch 已进入 5.x 系列。
+DSH Directory
++1
+
+置信度评级：
+
+功能/架构差异：高
+
+DSH 集成差异：高
+
+依赖复杂度判断：高
+
+Pro 的平台搜索优势：高
+
+“谁的实际搜索结果质量更高”：中低，因为缺少双方在统一测试集上的独立 benchmark
+
+ModSearch 作为你的默认首选：高
+
+官方项目：ModSearch GitHub
+ · dsh-web-search-pro GitHub
+ 
