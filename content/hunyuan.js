@@ -10,15 +10,21 @@
   const AI_TYPE = 'hunyuan';
   if (!window.AIPanelBase?.boot(AI_TYPE)) return;
 
-  // Shared response selectors — used by both the observer and getLatestResponse
+  // Shared response selectors — used by both the observer and getLatestResponse.
+  // 2026-09 改版: 回复正文在 [class*="hyc-content-md"](完成后带 -done 后缀),
+  // 用户消息在 agent-chat__bubble__content。[class*="markdown"] 现在会命中
+  // 200+ 个行内代码组件(hyc-common-markdown__code__inline), 排在前面会让
+  // 默认派生取到 10 字符的行内片段 —— 聚合「收集很少」的根因, 故移到最后。
   const RESPONSE_SELECTORS = [
-    '[class*="markdown"]',
+    '[class*="hyc-content-md"]',
+    '[class*="bubble__content"]',
     '[class*="chat-content"]',
     '[class*="message"] [class*="content"]',
     '[class*="answer"]',
     '[class*="response"]',
     '[class*="bubble"]',
-    '.agent-chat__content'
+    '.agent-chat__content',
+    '[class*="markdown"]'
   ];
 
   window.AIPanelBase.createController({
@@ -83,8 +89,35 @@
       'button[aria-label*="stop"]',
       'a[aria-label*="停止"]',
       '[class*="stop-generating"]'
-    ]
+    ],
 
-    // getLatestResponse omitted — base.js derives it from responseSelectors.
+    // CDP 实测(2026-09 改版): 自取最后一个 hyc-content-md(回复正文容器,
+    // 完成时带 -done); 回退到气泡内容时跳过与输入框文本相同的用户消息。
+    getLatestResponse: function () {
+      var nodes = document.querySelectorAll('[class*="hyc-content-md"]');
+      var node = nodes.length ? nodes[nodes.length - 1] : null;
+      if (!node) {
+        var editor = document.querySelector('textarea, [contenteditable="true"]');
+        var editorText = editor ? ((editor.value !== undefined ? editor.value : editor.innerText) || '').trim() : '';
+        var bubbles = document.querySelectorAll('[class*="bubble__content"]');
+        for (var i = bubbles.length - 1; i >= 0; i--) {
+          var t = (bubbles[i].innerText || '').trim();
+          if (t && t !== editorText) { node = bubbles[i]; break; }
+        }
+      }
+      if (!node) return null;
+      var clone = node.cloneNode(true);
+      clone.querySelectorAll('style, script').forEach(function (el) { el.remove(); });
+      var md = window.AIPanelDom && window.AIPanelDom.toMarkdown
+        ? window.AIPanelDom.toMarkdown(clone)
+        : (clone.innerText || '');
+      md = md
+        .replace(/^\s*\w*\s*(表格|复制|下载|代码预览|代码|预览)\s*$/gmi, '')
+        .replace(/^\s*已深度思考[^\n]*$/gm, '')
+        .replace(/```\s*\n+```/g, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+      return md || null;
+    }
   });
 })();

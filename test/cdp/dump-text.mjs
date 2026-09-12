@@ -16,6 +16,8 @@ const SITE_FILE = {
   'grok.com': 'grok.js', 'qianwen.com': 'qianwen.js',
   'minimax': 'minimax.js', 'mimo': 'mimo.js', 'doubao': 'doubao.js', 'hunyuan': 'hunyuan.js'
 };
+// 站点匹配键(SITE_FILE 的键需能命中 URL 子串)
+const SITE_MATCH = { 'hunyuan': 'yuanbao', 'minimax': 'minimaxi', 'mimo': 'xiaomimimo' };
 const src = fs.readFileSync(path.join("D:/repos/ai-roundtable/content", SITE_FILE[site]), "utf8");
 const domUtilsSrc = fs.readFileSync(path.join("D:/repos/ai-roundtable/content", "dom-utils.js"), "utf8");
 
@@ -76,7 +78,8 @@ const tabs = await new Promise((res) => {
     let d = ''; r.on('data', c => d += c); r.on('end', () => res(JSON.parse(d)));
   });
 });
-const tab = tabs.find(t => t.type === 'page' && t.url.includes(site));
+const matchKey = (typeof SITE_MATCH !== 'undefined' && SITE_MATCH[site]) || site;
+const tab = tabs.find(t => t.type === 'page' && t.url.includes(matchKey));
 if (!tab) { console.log('no tab for', site); process.exit(1); }
 const c = await cdp(tab.webSocketDebuggerUrl);
 const res = await c.cmd('Runtime.evaluate', { expression: EXPR, returnByValue: true });
