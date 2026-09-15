@@ -156,12 +156,48 @@
     } else {
       selectElementContents(el);
 
-      let inserted = false;
-      try {
-        if (document.execCommand) {
+      // 清空: execCommand selectAll+delete 在稳定态下有效(kimi 实测), 但标签
+      // 刚激活/编辑器重渲染时会失败 —— 重写就变成追加(kimi 输入框文本叠加
+      // 3 遍的根因)。清空后校验, 仍有实质内容时补一次键盘清空。
+      const clearEditable = () => {
+        try {
+          el.focus();
           document.execCommand('selectAll', false, null);
           dispatchBeforeInput(el, 'deleteContentBackward', null);
           document.execCommand('delete', false, null);
+        } catch (err) { /* fall through to keyboard */ }
+        if (getElementText(el).trim()) {
+          try {
+            const mk = (type, opts) => new KeyboardEvent(type, Object.assign({ bubbles: true, cancelable: true }, opts));
+            el.dispatchEvent(mk('keydown', { key: 'a', code: 'KeyA', keyCode: 65, ctrlKey: true }));
+            el.dispatchEvent(mk('keyup', { key: 'a', code: 'KeyA', keyCode: 65, ctrlKey: true }));
+            el.dispatchEvent(mk('keydown', { key: 'Backspace', code: 'Backspace', keyCode: 8 }));
+            el.dispatchEvent(mk('keyup', { key: 'Backspace', code: 'Backspace', keyCode: 8 }));
+          } catch (err2) { /* best effort */ }
+        }
+      };
+
+      // 关键策略: insertText 会「替换当前选区」——先把 Range 选中全部内容,
+      // 再一次性 insertText, 等于一步完成"清空+写入"。
+      // 旧实现是"selectAll+delete 再 insertText", 而删除在 Vue/富文本编辑器
+      // 里是异步生效的, 与紧随其后的插入竞争 -> 内容叠加(kimi 输入框文本叠加
+      // 3 遍的根因: hidden 截断写入 + 校验重写 + 提交重试 各追加了一份)。
+      const norm = (v) => String(v).replace(/\s+/g, '');
+      const selectAllContents = () => {
+        try {
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          return true;
+        } catch (err) { return false; }
+      };
+
+      selectAllContents();
+      let inserted = false;
+      try {
+        if (document.execCommand) {
           dispatchBeforeInput(el, 'insertText', text);
           inserted = document.execCommand('insertText', false, text);
         }
@@ -169,7 +205,11 @@
         inserted = false;
       }
 
-      if (!inserted || getElementText(el).trim() !== String(text).trim()) {
+      // 校验(归一化, 忽略编辑器自己的空白差异); 失败则清空+等待生效再兜底,
+      // 兜底前必须确认已清空, 否则会变成追加。
+      if (!inserted || norm(getElementText(el)) !== norm(text)) {
+        clearEditable();
+        for (let i = 0; i < 12 && getElementText(el).trim(); i++) await sleep(100);
         setEditableFallback(el, text);
       }
 

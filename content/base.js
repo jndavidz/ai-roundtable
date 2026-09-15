@@ -461,8 +461,13 @@
       try {
         const readBack = (window.AIPanelDom.getElementText(inputEl) || '').replace(/\s+/g, '');
         const expected = String(text).replace(/\s+/g, '');
-        if (expected.length > 40 && readBack.length < expected.length * 0.6) {
-          console.log('[AI Panel]', name, 'write looks truncated (' + readBack.length + '/' + expected.length + '), rewriting...');
+        const truncated = expected.length > 40 && readBack.length < expected.length * 0.6;
+        // 叠加检测: 长度明显超出预期 = 清空失败导致的重复追加(kimi 输入框
+        // 文本叠加 3 遍); 归一化后含两份以上同样文本也算。
+        const duplicated = expected.length > 40 &&
+          (readBack.length > expected.length * 1.5 || readBack.indexOf(expected) !== readBack.lastIndexOf(expected));
+        if (truncated || duplicated) {
+          console.log('[AI Panel]', name, (truncated ? 'write looks truncated' : 'write looks duplicated') + ' (' + readBack.length + '/' + expected.length + '), rewriting...');
           if (document.visibilityState === 'hidden') {
             try { await chrome.runtime.sendMessage({ type: 'ACTIVATE_TAB' }); } catch (e1) { /* ignore */ }
             const t1 = Date.now();
