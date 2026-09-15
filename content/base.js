@@ -442,7 +442,43 @@
         return true;
       }
 
+      // 富文本编辑器(Quill/Tencent 等)在 hidden 标签里写入不完整——实测
+      // 混元/gemini 只发出了消息的第一段(输入框残留一个 \n), 因为换行处理
+      // 在后台标签被挂起。写入前先确保标签可见。
+      if (document.visibilityState === 'hidden') {
+        try { await chrome.runtime.sendMessage({ type: 'ACTIVATE_TAB' }); } catch (e0) { /* ignore */ }
+        const t0 = Date.now();
+        while (document.visibilityState !== 'visible' && Date.now() - t0 < 6000) {
+          await sleep(200);
+        }
+        inputEl.focus();
+      }
+
       await window.AIPanelDom.setEditorText(inputEl, text, { afterInputDelay: config.afterInputDelay ?? 500 });
+
+      // 写入校验: 读回长度与预期差异过大 = 多行写入被截断(hidden 残留 \n
+      // 场景), 清空重写一次; 仍不完整则抛错交给上层处理。
+      try {
+        const readBack = (window.AIPanelDom.getElementText(inputEl) || '').replace(/\s+/g, '');
+        const expected = String(text).replace(/\s+/g, '');
+        if (expected.length > 40 && readBack.length < expected.length * 0.6) {
+          console.log('[AI Panel]', name, 'write looks truncated (' + readBack.length + '/' + expected.length + '), rewriting...');
+          if (document.visibilityState === 'hidden') {
+            try { await chrome.runtime.sendMessage({ type: 'ACTIVATE_TAB' }); } catch (e1) { /* ignore */ }
+            const t1 = Date.now();
+            while (document.visibilityState !== 'visible' && Date.now() - t1 < 6000) await sleep(200);
+            inputEl.focus();
+          }
+          await window.AIPanelDom.setEditorText(inputEl, text, { afterInputDelay: config.afterInputDelay ?? 500 });
+          const retry = (window.AIPanelDom.getElementText(inputEl) || '').replace(/\s+/g, '');
+          if (retry.length < expected.length * 0.6) {
+            throw new Error('Editor write truncated (' + retry.length + '/' + expected.length + ' chars) — 请确认该标签页可见后重试');
+          }
+        }
+      } catch (e2) {
+        if (/Editor write truncated/.test(e2.message)) throw e2;
+        // 读回失败(找不到编辑器等)不阻塞流程
+      }
 
       const submitResult = await window.AIPanelDom.submitMessage(inputEl, config.submitOptions).catch(async (err) => {
         // 后台标签限制: gemini 等 Angular/Quill 站点在 hidden 标签里点击发送

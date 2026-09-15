@@ -13,6 +13,16 @@
     aiType: AI_TYPE,
     name: 'Claude',
 
+    // 隐身对话(incognito)检测: URL 带 ?incognito= 或页面显示「You're
+    // incognito」时结构不同(不保存历史、user-message 容器缺失), 群发进去
+    // 既不会被聚合读到、也不符合"留档"预期——直接阻断并提示用户切回普通对话。
+    loginCheck: function () {
+      if (/incognito/i.test(location.href) ||
+          /incognito/i.test(document.body ? document.body.innerText.slice(0, 2000) : '')) {
+        throw new Error('Claude 当前是隐身对话(incognito)——请在该标签点侧边栏「New chat」切回普通对话后重发');
+      }
+    },
+
     // Claude uses a contenteditable rich-text editor. The exact attributes
     // change often, so prefer semantic textbox/composer signals over one class.
     inputSelectors: [
