@@ -84,17 +84,25 @@
     //       助手回复 container-xxx md-box-root(不带 gh-user)。
     // 用 :not(gh-user) 区分, 取最后一条助手消息整体序列化。
     getLatestResponse: function () {
-      var boxes = document.querySelectorAll('[class*="md-box-root"]:not([class*="gh-user"])');
+      // 2026-09 改版: 豆包的 gh-user 标记已消失(实测选择器无匹配), 用户消息
+      // 与助手回复都渲染成 md-box-root; 且输入框上方存在"待发送预览"容器,
+      // 使"最后一个 md-box"是用户问题而非回复 —— 这就是聚合读不到答复的原因。
+      // 策略: 从后往前找第一个既不是输入框文本、也明显长于用户提问的容器。
+      var boxes = document.querySelectorAll('[class*="md-box-root"]');
       if (!boxes.length) return null;
-      // 防误抓: 豆包的用户消息也渲染成 md-box-root 且不带 gh-user——回复
-      // 未生成时最后一个是刚提交的用户问题(第一次群发误抓的根因)。
-      // 跳过与输入框当前文本相同的容器。
       var activeEditor = document.querySelector('[contenteditable="true"]');
       var editorText = activeEditor ? (activeEditor.innerText || '').trim() : '';
-      var last = boxes[boxes.length - 1];
-      if (editorText && (last.innerText || '').trim() === editorText && boxes.length > 1) {
-        last = boxes[boxes.length - 2];
+      var norm = function (v) { return String(v || '').replace(/\s+/g, ''); };
+      var editorNorm = norm(editorText);
+      var last = null;
+      for (var i = boxes.length - 1; i >= 0 && !last; i--) {
+        var t = norm((boxes[i].innerText || ''));
+        if (!t) continue;
+        // 跳过: 与输入框文本一致(待发送预览/刚提交的用户消息)
+        if (editorNorm && t === editorNorm) continue;
+        last = boxes[i];
       }
+      if (!last) last = boxes[boxes.length - 1];
       var clone = last.cloneNode(true);
       clone.querySelectorAll('style, script').forEach(function (el) { el.remove(); });
       var md = window.AIPanelDom && window.AIPanelDom.toMarkdown
