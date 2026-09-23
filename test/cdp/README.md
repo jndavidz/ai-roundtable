@@ -14,10 +14,10 @@
 
 ```bash
 /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile \
-  -Command "& 'D:\PortableApps\_sys\node\node.exe' 'D:\repos\ai-roundtable\test\cdp\<script>.mjs'"
+  -Command "& 'D:\PortableApps\_sys\node\node.exe' 'D:\_work\repos\ai-roundtable\test\cdp\<script>.mjs'"
 ```
 
-依赖 `cdp-helper.mjs` 的多仓库权威源:`D:\repos\aurora\scripts\cdp\cdp-helper.mjs`。
+依赖 `cdp-helper.mjs` 的多仓库权威源:`D:\_work\repos\aurora\scripts\cdp\cdp-helper.mjs`。
 
 ## 常用脚本
 
