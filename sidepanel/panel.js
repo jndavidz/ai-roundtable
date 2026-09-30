@@ -254,6 +254,7 @@ async function checkConnectedTabs() {
 
     // First pass: light up dots from the URL so there's instant feedback.
     for (const tab of tabs) {
+      if (!isUsableTabForDot(tab)) continue;
       const aiType = getAITypeFromUrl(tab.url);
       if (aiType) {
         updateTabStatus(aiType, true);
@@ -283,6 +284,13 @@ async function checkConnectedTabs() {
 }
 
 // Hostname matching + URL→aiType resolution come from shared/constants.js.
+
+// 状态灯首遍点亮前先过滩临时对话面(claude ?incognito= / 混元
+// ?chatMode=temp): 它们能被 URL 匹配点亮绿灯, 但群发会发进不留档的
+// 临时会话 —— 绿灯只保留给可正常收指令的 tab。
+function isUsableTabForDot(tab) {
+  return Boolean(tab.url) && !isEphemeralChatUrl(tab.url);
+}
 
 function updateTabStatus(aiType, connected) {
   roleStatusState[aiType] = connected;
@@ -758,12 +766,14 @@ async function ensureTabsOpen(targets) {
     const patterns = AI_URL_PATTERNS[ai] || [];
     const has = tabs.some(t => {
       try {
+        if (isEphemeralChatUrl(t.url)) return false;
         const h = new URL(t.url).hostname.toLowerCase().replace(/^www\./, '');
         return patterns.some(pt => hostnameMatches(h, pt));
       } catch (e) { return false; }
     });
     if (!has) missing.push(ai);
   }
+
   if (missing.length === 0) return;
 
   log(`正在打开未连接的站点: ${missing.map(getAIName).join('、')}（首次打开需要几秒加载）...`);

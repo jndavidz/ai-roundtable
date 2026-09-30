@@ -20,7 +20,7 @@ const AI_URL_PATTERNS = {
   grok: ['grok.com'],
   qianwen: ['qianwen.com', 'tongyi.aliyun.com'],
   mimo: ['xiaomimimo.com'],
-  minimax: ['minimaxi.com', 'minimax.io'],
+  minimax: ['minimaxi.com', 'minimax.io', 'minimax.cn'],
   doubao: ['doubao.com'],
   hunyuan: ['yuanbao.tencent.com']
 };
@@ -38,9 +38,13 @@ const AI_HOME_URLS = {
   grok: 'https://grok.com/',
   qianwen: 'https://www.qianwen.com/',
   mimo: 'https://aistudio.xiaomimimo.com/',
-  minimax: 'https://agent.minimaxi.com/',
+  minimax: 'https://agent.minimax.cn/',
   doubao: 'https://www.doubao.com/',
-  hunyuan: 'https://yuanbao.tencent.com/'
+  // ⚠️ 不能用裸首页 https://yuanbao.tencent.com/ —— 服务端会把它重定向回
+  // 最近会话(可能正是临时对话，再次落入 ?chatMode=temp 的坑)。
+  // 用元宝「新建对话」对应的无 query route(CDP 实测: 整页重载为全新普通
+  // 会话，temp=false，后续发送不再翻转回 temp)。
+  hunyuan: 'https://yuanbao.tencent.com/chat/naQivTmsDa'
 };
 
 const AI_TYPES = Object.keys(AI_URL_PATTERNS);
@@ -82,4 +86,21 @@ function getAITypeFromUrl(url) {
     }
   }
   return null;
+}
+
+// 临时/一次性对话面不保存历史、DOM 结构也不同（Claude incognito 缺
+// user-message 容器、混元临时对话 ?chatMode=temp），群发进去既丢上下文
+// 也不留档。tab 选择与状态灯一律视为「该站不可用」，由调用方走新建
+// 普通 tab 的路径。新增同类站点时在此追加一行，勿在调用点散落 if。
+function isEphemeralChatUrl(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch (err) {
+    return false;
+  }
+  const host = u.hostname.toLowerCase().replace(/^www\./, '');
+  if (host === 'claude.ai' && u.searchParams.has('incognito')) return true;
+  if (host === 'yuanbao.tencent.com' && u.searchParams.get('chatMode') === 'temp') return true;
+  return false;
 }

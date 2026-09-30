@@ -381,6 +381,19 @@
         return true;
       }
 
+      // ENSURE_TAB 新建 tab 后调用: 把页面重置到「全新普通会话」，避开站点
+      // 首页自动恢复最近会话（那条会话可能是临时/隐身对话，发送时会翻转）。
+      // 仅对声明了 resetToNewChat 的适配器生效。
+      // ENSURE_TAB / RESET_TABS 调用: 把页面重置到「全新普通会话」，避开站点
+      // 粘性临时对话状态。返回值透传 —— background 靠 {reset:true} 判断
+      // 「页面会重建，需重新等就绪」。仅对声明了 resetToNewChat 的适配器生效。
+      if (message.type === 'RESET_TO_NEW_CHAT' && config.resetToNewChat) {
+        Promise.resolve(config.resetToNewChat())
+          .then((r) => sendResponse(r || { success: true }))
+          .catch(err => sendResponse({ success: false, error: err.message }));
+        return true;
+      }
+
       if (message.type === 'GET_LATEST_RESPONSE') {
         sendResponse({ content: effectiveConfig.getLatestResponse ? effectiveConfig.getLatestResponse() : null });
         return true;
@@ -390,13 +403,19 @@
       // freshly opened SPA tab — React/Angular mount the composer a few
       // seconds after our document_idle injection. ENSURE_TAB polls this so
       // the fan-out only starts once the input field actually exists.
+      //
+      // 适配器可再声明 isBlockedState(): 页面存在输入框但处于不可用态
+      // (如混元的临时对话)时也算未就绪 —— 否则重置后的轮询会被「重载前
+      // 的旧页面」应答就绪，紧接着的消息就发进了临时会话(实测时序坑)。
       if (message.type === 'CHECK_INPUT') {
         let ready = false;
+        let blocked = null;
         try {
-          ready = !!(window.AIPanelDom && window.AIPanelDom.findInputField(
+          if (config.isBlockedState) blocked = config.isBlockedState();
+          ready = !blocked && !!(window.AIPanelDom && window.AIPanelDom.findInputField(
             config.inputSelectors, { preferBottom: true }));
         } catch (e) { ready = false; }
-        sendResponse({ ready });
+        sendResponse({ ready, blocked });
         return true;
       }
 
@@ -409,7 +428,8 @@
 
     async function injectMessage(text) {
       // Some sites need a login/session check before we touch the composer
-      if (config.loginCheck) config.loginCheck();
+      // (hunyuan 的 loginCheck 是 async: 可能要先自动切回普通对话)
+      if (config.loginCheck) await config.loginCheck();
 
       const inputEl = window.AIPanelDom?.findInputField(config.inputSelectors, { preferBottom: true });
       if (!inputEl) throw new Error(`Could not find ${name} input field`);

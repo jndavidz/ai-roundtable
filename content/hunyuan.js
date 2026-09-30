@@ -10,6 +10,25 @@
   const AI_TYPE = 'hunyuan';
   if (!window.AIPanelBase?.boot(AI_TYPE)) return;
 
+  // 临时对话态的判定(单一来源): URL 参数 **或** 页面标题。
+  // 实测坑: 元宝处于临时会话时 URL 往往不带 ?chatMode=temp(形如
+  // /chat/<agent>/<cid>)，只有 document.title 是「临时对话」—— 只查 URL
+  // 会漏判，正是「修复后仍发进临时对话」的根因。
+  function isTempState() {
+    return new URLSearchParams(location.search).get('chatMode') === 'temp' ||
+           document.title === '临时对话';
+  }
+
+  // 元宝「新建对话」对应的无 query route: 复用 URL 上的 /chat/<id>，但
+  // 刻意丢掉 ?chatMode=temp。CDP 实测 —— 浏览器级硬导航到这个 route 后
+  // 重载为全新普通会话(temp=false)，且后续发送不再翻转回 temp；反之导航
+  // 到首页会被 SPA 自动恢复成最近(临时)会话，回到 ?chatMode=temp 失败。
+  function newChatUrl() {
+    const m = location.pathname.match(/\/chat\/[^/?]+/);
+    const base = m ? m[0] : '/chat/naQivTmsDa'; // SPA 默认「新建对话」route
+    return 'https://yuanbao.tencent.com' + base;
+  }
+
   // Shared response selectors — used by both the observer and getLatestResponse.
   // 2026-09 改版: 回复正文在 [class*="hyc-content-md"](完成后带 -done 后缀),
   // 用户消息在 agent-chat__bubble__content。[class*="markdown"] 现在会命中
@@ -32,7 +51,43 @@
     name: 'Hunyuan',
     afterInputDelay: 600, // give Tencent's React editor time to register the text
 
-    loginCheck: function() {
+    // CHECK_INPUT 阻塞态: 有输入框但处于临时对话 —— ENSURE_TAB 重置后的轮询
+    // 靠它区分「旧临时页面的 cs」与「重置后的新页面」，否则消息会发进旧页面。
+    isBlockedState: function () { return isTempState(); },
+
+    // 临时对话自愈(CDP 实测 2026-09-30): 元宝的临时态是 SPA **运行时内存**
+    // 状态 —— 一旦本页曾经处于 ?chatMode=temp，之后所有发送都带
+    // isTemporary:true，即使 URL 已回到无参数的 /chat/...；且与 localStorage
+    // 无关(清 TEMP_CHAT_USED 无效，已用对照实验排除)。
+    // 软导航(location.replace / SPA 路由 / history.replaceState) 都**保留**
+    // 内存状态，重发依旧 true；只有**完整重载页面**能清掉。
+    //
+    // ⚠️ 关键坑: 早期实现 HARD_NAVIGATE 到首页 https://yuanbao.tencent.com/ ——
+    // 而首页会**自动恢复最近会话**，那条会话正是临时对话，于是又回到
+    // ?chatMode=temp「修复失败」。点侧栏「新建对话」按钮走的是
+    // history.pushState('/chat/<id>') 复用同一会话 id(无 query)，SPA 把它
+    // 当成全新普通会话；但合成 .click() 触发不了 React 处理器(需 trusted
+    // 事件)，故内容脚本不能靠点击，只能**浏览器级硬导航到无 query 的
+    // /chat/<id> 路由**(见上方 newChatUrl(); CDP Page.navigate 已实测)。
+    resetToNewChat: async function () {
+      const dirty = isTempState() ||
+                    localStorage.getItem('TEMP_CHAT_USED') ||
+                    localStorage.getItem('TEMP_CHAT_GUIDE_SHOWED');
+      if (!dirty) return { reset: false };
+      localStorage.removeItem('TEMP_CHAT_USED');
+      localStorage.removeItem('TEMP_CHAT_GUIDE_SHOWED');
+      // 浏览器级硬导航到「全新普通会话」route(无 ?chatMode=temp)。
+      try {
+        await chrome.runtime.sendMessage({ type: 'HARD_NAVIGATE', url: newChatUrl() });
+      } catch (e) { /* background 不可达: 由 loginCheck 兜底报错 */ }
+      return { reset: true };
+    },
+
+    loginCheck: async function() {
+      // 兜底: 自愈已跑过仍处于临时态(重置失败/适配器未挂)时不静默发出。
+      if (isTempState()) {
+        throw new Error('混元仍处于临时对话(页面已自动重置过一次仍未生效)——请在页面上新建普通对话后重发');
+      }
       if (window.location.pathname.includes('/login') ||
           document.querySelector('.hyc-login__dialog') ||
           document.querySelector('.hyc-login__close')) {

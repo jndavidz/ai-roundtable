@@ -31,6 +31,8 @@
     "https://chat.minimaxi.com/*",
     "https://agent.minimaxi.com/*",
     "https://chat.minimax.io/*",
+    "https://chat.minimax.cn/*",
+    "https://agent.minimax.cn/*",
     "https://www.doubao.com/*",
     "https://doubao.com/*",
     "https://yuanbao.tencent.com/*"
@@ -91,7 +93,7 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://chat.minimaxi.com/*", "https://agent.minimaxi.com/*", "https://chat.minimax.io/*"],
+      "matches": ["https://chat.minimaxi.com/*", "https://agent.minimaxi.com/*", "https://chat.minimax.io/*", "https://chat.minimax.cn/*", "https://agent.minimax.cn/*"],
       "js": ["content/dom-utils.js", "content/base.js", "content/minimax.js"],
       "run_at": "document_idle"
     },

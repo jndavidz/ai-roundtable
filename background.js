@@ -110,19 +110,25 @@ async function handleMessage(message, sender) {
         if (tabId !== null) {
           try {
             const inputCheck = await chrome.tabs.sendMessage(tabId, { type: 'CHECK_INPUT' });
-            if (inputCheck?.ready) return { success: true };
+            if (inputCheck?.ready) {
+              await resetEphemeralState(tabId, aiType);
+              return { success: true };
+            }
           } catch (err) { /* content script not injected yet */ }
           await new Promise(r => setTimeout(r, 1500));
           continue;
         }
         const probe = await checkAIConnection(aiType);
         if (probe.connected) {
-          // 已有可用标签(之前就开着) —— 找到它的 id 后走同一就绪检查
+          // 已有可用标签(之前就开着) —— 找到它的 id 后走同一就绪检查。
+          // incognito/temp 等临时对话面不算可用(见 isEphemeralChatUrl),
+          // 命中时留在下面新建普通 tab。
           try {
             const tabsNow = await chrome.tabs.query({});
             const patterns = AI_URL_PATTERNS[aiType] || [];
             const match = tabsNow.find(t => {
               try {
+                if (isEphemeralChatUrl(t.url)) return false;
                 const h = new URL(t.url).hostname.toLowerCase().replace(/^www\./, '');
                 return patterns.some(pt => hostnameMatches(h, pt));
               } catch (e) { return false; }
@@ -189,6 +195,17 @@ async function handleMessage(message, sender) {
       } finally {
         try { await chrome.debugger.detach(target); } catch (e) { /* already detached */ }
       }
+    }
+
+    // 适配器请求的硬导航(chrome.tabs.update 级别的完整重载)。
+    // 与 content script 内的 location.reload 不同，浏览器级导航能清掉站点的
+    // SPA 运行时状态(元宝的临时对话态就是这类 —— 软重载会被原样保留)。
+    case 'HARD_NAVIGATE': {
+      const tabId = sender.tab?.id;
+      const url = message.url;
+      if (!tabId || !url) return { success: false, error: 'missing tabId/url' };
+      await chrome.tabs.update(tabId, { url });
+      return { success: true };
     }
 
     case 'ACTIVATE_TAB':
@@ -320,6 +337,12 @@ async function sendMessageToAI(aiType, message) {
       return { success: false, error: `No ${aiType} tab found` };
     }
 
+    // 发送前一刻的状态自愈(CDP 实测): 元宝这类站点的临时态是 SPA 运行时
+    // 状态 —— 硬导航到根路径后 isTemporary 为 false，但页面跑一段时间会
+    // 自己把 URL 翻回 ?chatMode=temp(与 localStorage 标记无关)。因此重置
+    // 必须紧贴发送，而不是群发开始前。干净站点该调用零代价返回。
+    await resetEphemeralState(tab.id, aiType);
+
     console.log('[AI Panel] Sending message to', aiType, 'tab:', tab.url);
 
     const response = await sendMessageToContentScript(tab, aiType, {
@@ -349,6 +372,52 @@ async function sendMessageToAI(aiType, message) {
     });
     return { success: false, error: err.message };
   }
+}
+
+async function resetEphemeralState(tabId, aiType) {
+  // 适配器可选钩子: 站点状态里存在「粘性临时对话」时清理并重建页面。
+  // 必须走 sendMessageToContentScript —— 它会在 cs 因扩展重载而失活时
+  // 先重注入(直接在 chrome.tabs.sendMessage 上会静默失败, 重置变成假成功)。
+  let result = null;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    result = await sendMessageToContentScript(tab, aiType, { type: 'RESET_TO_NEW_CHAT' });
+  } catch (err) {
+    return; // 无此能力或注入失败: 交由各站 loginCheck 兜底
+  }
+  if (!result?.reset) return;
+  const deadline = Date.now() + 40000;
+  while (Date.now() < deadline) {
+    await sleep(1000);
+    try {
+      const ready = await chrome.tabs.sendMessage(tabId, { type: 'CHECK_INPUT' });
+      if (ready?.ready) return;
+    } catch (err) { /* 重导航中: 重试 */ }
+  }
+}
+
+// 重置专用查找: 与 findAITab 同一套评分，但不排除临时/隐身对话面 —— 发送前
+// 自愈需要能拿到脏 tab(URL 带 ?chatMode=temp 会被 isEphemeralChatUrl 挡在
+// findAITab 外，而那正是要修的对象)。
+async function findAITabForReset(aiType) {
+  const patterns = AI_URL_PATTERNS[aiType];
+  if (!patterns) return null;
+  const tabs = await chrome.tabs.query({});
+  const scored = [];
+  for (const tab of tabs) {
+    if (!tab.url) continue;
+    let url;
+    try { url = new URL(tab.url); } catch (e) { continue; }
+    const hostname = url.hostname.toLowerCase().replace(/^www\./, '');
+    if (!patterns.some(p => hostnameMatches(hostname, p))) continue;
+    let score = 0;
+    if (tab.active) score += 30;
+    if (!tab.discarded) score += 10;
+    if (tab.id === lastUsedTabIdByAI[aiType]) score += LAST_USED_TAB_BONUS;
+    scored.push({ tab, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.tab || null;
 }
 
 async function sendMessageToContentScript(tab, aiType, payload) {
@@ -474,6 +543,12 @@ const AI_CHAT_PREFIXES = {
 function scoreAITab(aiType, tab) {
   if (!tab.url) return -Infinity;
 
+  // incognito/temp 等临时对话面强烈降权但**不排除**: 有干净 tab 时优先干净的;
+  // 只有脏 tab 时仍能被选中 —— 否则发送前的状态自愈(见 sendMessageToAI
+  // 里的 resetEphemeralState)永远拿不到需要修的那个 tab。选后仍脏则由
+  // 自愈/各站 loginCheck 决定报错还是修复。
+  const ephemeralPenalty = isEphemeralChatUrl(tab.url) ? -1000 : 0;
+
   let url;
   try {
     url = new URL(tab.url);
@@ -501,7 +576,7 @@ function scoreAITab(aiType, tab) {
   const prefixes = AI_CHAT_PREFIXES[aiType];
   if (prefixes) {
     score += prefixes.some(p => url.pathname.includes(p)) ? 100 : 30;
-    return score;
+    return score + ephemeralPenalty;
   }
 
   if (aiType === 'claude') {
@@ -523,7 +598,7 @@ function scoreAITab(aiType, tab) {
     else score += 30;
   }
 
-  return score;
+  return score + ephemeralPenalty;
 }
 
 async function notifySidePanel(type, data) {
