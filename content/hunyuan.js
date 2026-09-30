@@ -108,6 +108,9 @@
 
     submitOptions: {
       selectors: [
+        'button[aria-label*="提交"]',
+        'a[aria-label*="提交"]',
+        'button[class*="submit" i]',
         'a[aria-label*="发送"]',
         'a[aria-label*="Send"]',
         'button[aria-label*="发送"]',
@@ -119,7 +122,14 @@
         '.t-button--theme-primary'
       ],
       positivePattern: /(send|submit|发送|提交)/i,
-      allowUnlabeledNearInput: true,
+      // ⚠️ 2026-09-30 CDP 实测抓到现行: 这里绝不能开 allowUnlabeledNearInput。
+      // 元宝输入框上方一整排工具栏按钮(添加/切换模型/技能/深度研究/专业写作/
+      // PPT 生成/进入临时对话…)位置分与提交按钮同高(全为 65 分并列)，一旦
+      // 放行无标签候选，score>bestScore 的取首个 —— DOM 顺序里工具栏排在
+      // 提交按钮前，就点了「进入临时对话」: 每发一条消息顺手把会话切进
+      // 临时态(消息全部发进不留档的临时对话)。元宝发送按钮 aria 是「提交」，
+      // 正向模式能直接命中，不需要无标签兑底。
+      allowUnlabeledNearInput: false,
       enterFallback: true,
       maxWait: 6000,
       // Longer verify window: the send button may not change state immediately
@@ -163,6 +173,15 @@
       if (!node) return null;
       var clone = node.cloneNode(true);
       clone.querySelectorAll('style, script').forEach(function (el) { el.remove(); });
+      // 剥掉内联附件/引用卡(CDP 实测 2026-09-30): 元宝的深度研究/引用功能会把
+      // 附件文件卡直接渲染进回复正文容器内部(span.hyc-common-markdown__replace-fileLink
+      // > div.ybc-p--file-card > div.file-card_fileCard__xxx), 连同文件名+全文一起展开 ——
+      // 不剥的话聚合会把附件内容当成混元回复的一部分。
+      // ⚠️ 必须精确类名截断, 不能用 [class*="file-card"]: 宽匹配会误中
+      // hyc-common-markdown(正文容器自身含 "file-card" 子串), 把整段正文删光。
+      clone.querySelectorAll(
+        '[class*="file-card_"], [class*="replace-fileLink"], [class*="ybc-p--file-card"], [class*="web-card_"], [class*="search-card_"]'
+      ).forEach(function (el) { el.remove(); });
       var md = window.AIPanelDom && window.AIPanelDom.toMarkdown
         ? window.AIPanelDom.toMarkdown(clone)
         : (clone.innerText || '');

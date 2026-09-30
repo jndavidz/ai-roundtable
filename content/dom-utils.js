@@ -290,6 +290,13 @@
       : el.closest?.('button, [role="button"], a[aria-label*="发送"], a[aria-label*="Send"], a[aria-label*="send"], a[class*="send-btn"]');
   }
 
+  // 模式开关类按钮: 点了不会发送消息，只会切换会话模式 —— 一旦被当成
+  // 提交按钮点下去，消息没发出却改变了会话状态。实测受害者: 元宝的
+  // 「进入临时对话」(每发一条消息就把会话切进临时态，全部不留档)。
+  // 严格负分且不允许被 allowUnlabeledNearInput 兜底救回，因为它们恰好
+  // 都紧贴输入框，位置分很高。
+  const MODE_TOGGLE_PATTERN = /(进入|退出|开启|关闭|切换)?\s*(临时|隐身|无痕|隐私|联网搜索|深度思考)[对话|模式]?|temporary|incognito/i;
+
   function scoreSubmitButton(btn, inputEl, positivePattern, negativePattern, allowUnlabeledNearInput = false) {
     if (!btn || !isVisible(btn)) return -Infinity;
 
@@ -297,6 +304,9 @@
     const positive = positivePattern || /(send|submit|run|发送|提交)/i;
     const negative = negativePattern || /(stop|cancel|voice|mic|microphone|upload|attach|image|file|menu|settings|stop generating|停止|取消|上传|附件|麦克风)/i;
     const hasPositiveSignal = positive.test(label) || btn.type === 'submit';
+
+    // 模式开关一票否决: 即使带 positive 词(如「关闭临时对话」)也不许当提交
+    if (MODE_TOGGLE_PATTERN.test(label)) return -Infinity;
 
     let score = 0;
 
