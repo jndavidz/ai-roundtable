@@ -1,0 +1,19 @@
+# 行尾与二进制规则（2026-10-11 补）
+#
+# 本仓是 ai-roundtable（Node/ESM，含前端静态资源）。现有 0 个 CRLF 文件。
+
+# ---- 源码/文档：LF ----
+*.mjs   text eol=lf
+*.js    text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.gitignore text eol=lf
+
+# ---- 二进制 ----
+*.png   binary
+*.jpg   binary
+*.ico   binary
