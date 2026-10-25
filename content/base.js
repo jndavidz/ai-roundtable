@@ -360,6 +360,29 @@
         config.submitOptions?.submittingSelectors
     };
 
+    // Latest-reply cache. The capture loop recomputes the full DOM→Markdown
+    // serialization every tick (~500ms) just to detect change/stability and
+    // used to throw the result away; GET_LATEST_RESPONSE (split view polls
+    // every 800ms, plus aggregation and /summary on demand) then re-ran the
+    // same full serialization again — ≈3.25 full serializations/sec/tab while
+    // a reply is streaming, growing with reply length. The tick (and the
+    // pre-send snapshot) remain the sole writers: they MUST recompute to
+    // detect change, so they always run raw and refresh the cache. Readers
+    // inside the freshness window reuse the cached value instead of
+    // re-serializing. replyCacheFreshMs is a test hook; 1s covers the split
+    // view's 800ms poll cadence against the capture tick's 500ms refresh.
+    const replyCache = { content: null, at: 0 };
+    const replyCacheFreshMs = config.replyCacheFreshMs ?? 1000;
+    const rawGetLatest = effectiveConfig.getLatestResponse;
+    if (rawGetLatest) {
+      effectiveConfig.getLatestResponse = function () {
+        const content = rawGetLatest() || '';
+        replyCache.content = content;
+        replyCache.at = Date.now();
+        return content;
+      };
+    }
+
     // Notify background that content script is ready
     safeSendMessage({ type: 'CONTENT_SCRIPT_READY', aiType });
 
@@ -395,7 +418,17 @@
       }
 
       if (message.type === 'GET_LATEST_RESPONSE') {
-        sendResponse({ content: effectiveConfig.getLatestResponse ? effectiveConfig.getLatestResponse() : null });
+        // Serve from the reply cache while fresh (see cache note above); a
+        // cold or expired cache recomputes once and refreshes it. After a
+        // capture finishes, the final stable content is what the last tick
+        // cached, so aggregation right after a turn lands on the exact final
+        // reply at zero serialization cost.
+        if (effectiveConfig.getLatestResponse) {
+          const fresh = replyCache.at > 0 &&
+            (Date.now() - replyCache.at) <= replyCacheFreshMs;
+          if (!fresh) effectiveConfig.getLatestResponse();
+        }
+        sendResponse({ content: replyCache.content || null });
         return true;
       }
 
