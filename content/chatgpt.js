@@ -57,8 +57,14 @@
       ]
     },
 
+    // 2026-10 codex app-shell 改版(CDP 实测 2026-10-26): data-testid 与
+    // data-message-author-role 全线消失, class 改为构建哈希。新 DOM 里唯一
+    // 的稳定语义锚点是正文容器自带的显式角色标记; 轮次容器的 search-unit-key
+    // 以角色收尾(user/assistant)。旧锚点保留在后面做回退。
     responseSelectors: [
-      '[data-message-author-role="assistant"]',
+      '[data-markdown-text-style="assistant-message"]', // codex shell 正文容器
+      '[data-content-search-unit-key$=":assistant"]',   // codex shell 轮次容器(含 UI 噪声, 序列化时剥)
+      '[data-message-author-role="assistant"]',         // 旧版 DOM(≤2026-09)
       '.agent-turn',
       '[class*="assistant"]'
     ],
@@ -73,9 +79,13 @@
       'button[aria-label*="Stream"]'
     ],
 
-    // Count assistant message containers — reliable signal for new message detection
+    // Count assistant message containers — reliable signal for new message
+    // detection. Selector order mirrors responseSelectors (new codex shell
+    // markers first, legacy anchors as fallback).
     getMessageCount: function() {
       const containerSelectors = [
+        '[data-markdown-text-style="assistant-message"]',
+        '[data-content-search-unit-key$=":assistant"]',
         '[data-message-author-role="assistant"]',
         '[data-testid*="conversation-turn"]',
         '.agent-turn'
@@ -95,9 +105,10 @@
       return null;
     },
 
-    // getLatestResponse 已删除: base.js 默认派生取 [data-message-author-role=
-    // "assistant"] 最后块, 经 DOM→Markdown 序列化(表格管道行/引用链接/代码围栏/
-    // 标题分级), 旧版多块 innerText 拼接会把块间都插空行(实测 902 行碎块)。
+    // getLatestResponse 已删除: base.js 默认派生按 responseSelectors 顺序取
+    // 第一个命中选择器的最后块, 经 DOM→Markdown 序列化(表格管道行/引用链接/
+    // 代码围栏/标题分级), 旧版多块 innerText 拼接会把块间都插空行(实测 902
+    // 行碎块)。选择器回退链见上方 responseSelectors 注释。
     extractNoiseSelectors: [
       // 不用 [class*="citation"] 模糊匹配——citation 类可能承载正文文本
       // (gemini 的教训); data-testid 是行为标记, 误删风险低
