@@ -309,22 +309,29 @@ async function getResponseFromContentScript(aiType) {
   try {
     const tab = await findAITab(aiType);
     if (!tab) {
-      // Fallback to stored response if tab not found
+      // Fallback to stored response if tab not found — flagged stale so the
+      // side panel can mark it as the previous round's reply instead of
+      // presenting it unlabeled as current.
       const responses = await getStoredResponses();
-      return { content: responses[aiType] };
+      return { content: responses[aiType], stale: true, reason: 'no-tab' };
     }
 
-    // Query content script for real-time DOM content
-    const response = await chrome.tabs.sendMessage(tab.id, {
+    // Query content script for real-time DOM content. Must go through
+    // sendMessageToContentScript (not bare tabs.sendMessage) so a missing or
+    // invalidated content script — e.g. after an extension reload — gets
+    // re-injected and retried. This used to be the only message path without
+    // that self-heal, which made aggregation silently fall back to stored
+    // (old) replies or null while every other path kept working.
+    const response = await sendMessageToContentScript(tab, aiType, {
       type: 'GET_LATEST_RESPONSE'
     });
 
     return { content: response?.content || null };
   } catch (err) {
-    // Fallback to stored response on error
+    // Fallback to stored response on error, flagged stale (see above)
     console.log('[AI Panel] Failed to get response from content script:', err.message);
     const responses = await getStoredResponses();
-    return { content: responses[aiType] };
+    return { content: responses[aiType], stale: true, reason: err.message };
   }
 }
 
@@ -353,7 +360,7 @@ async function sendMessageToAI(aiType, message) {
     // Pin affinity only on a successful send; failures leave the previous
     // choice (or none) so the next turn re-scores tabs normally.
     if (response?.success && tab.id !== undefined) {
-      lastUsedTabIdByAI[aiType] = tab.id;
+      await saveAffinity(aiType, tab.id);
     }
 
     // Notify side panel
@@ -402,7 +409,7 @@ async function resetEphemeralState(tabId, aiType) {
 async function findAITabForReset(aiType) {
   const patterns = AI_URL_PATTERNS[aiType];
   if (!patterns) return null;
-  const tabs = await chrome.tabs.query({});
+  const tabs = await getAllTabs();
   const scored = [];
   for (const tab of tabs) {
     if (!tab.url) continue;
@@ -500,14 +507,60 @@ async function sendFilesToAI(aiType, files) {
 // affinity, the user merely switching window focus could silently redirect the
 // rest of a debate to a different chat tab of the same model (fresh session,
 // no context). The remembered tab gets a bonus above any natural score.
+// Mirrored into chrome.storage.session: the SW is terminated after ~30s idle
+// and an in-memory-only map used to reset on every wake-up, dropping the pin
+// exactly when multi-turn debates need it. session storage is memory-backed
+// and survives SW restarts.
 const lastUsedTabIdByAI = {};
 const LAST_USED_TAB_BONUS = 200;
+
+async function loadAffinity() {
+  try {
+    const got = await chrome.storage.session.get('lastUsedTabIdByAI');
+    Object.assign(lastUsedTabIdByAI, got.lastUsedTabIdByAI || {});
+  } catch (e) { /* storage unavailable: stay in-memory only */ }
+}
+loadAffinity();
+
+async function saveAffinity(aiType, tabId) {
+  lastUsedTabIdByAI[aiType] = tabId;
+  try {
+    await chrome.storage.session.set({ lastUsedTabIdByAI });
+  } catch (e) { /* storage unavailable: in-memory map still works until SW sleeps */ }
+}
+
+// Short-TTL shared snapshot of chrome.tabs.query({}). The side panel opens
+// with 13 parallel CHECK_CONNECTION probes and the split view polls every
+// 800ms; every findAITab/findAITabForReset call used to re-enumerate ALL
+// browser tabs (O(13×N) tab objects per panel open, ~5 queries/sec while the
+// split view is up). Within the TTL all lookups share one snapshot; per-AI
+// scoring still runs fresh on each call. Tab add/update/close events
+// invalidate immediately, so the TTL only bounds staleness for changes that
+// fire no event (there are none in practice).
+const TABS_SNAPSHOT_TTL_MS = 250;
+let tabsSnapshot = null;
+let tabsSnapshotAt = 0;
+
+function invalidateTabsSnapshot() {
+  tabsSnapshot = null;
+  tabsSnapshotAt = 0;
+}
+
+async function getAllTabs() {
+  const now = Date.now();
+  if (tabsSnapshot && now - tabsSnapshotAt < TABS_SNAPSHOT_TTL_MS) {
+    return tabsSnapshot;
+  }
+  tabsSnapshot = await chrome.tabs.query({});
+  tabsSnapshotAt = now;
+  return tabsSnapshot;
+}
 
 async function findAITab(aiType) {
   const patterns = AI_URL_PATTERNS[aiType];
   if (!patterns) return null;
 
-  const tabs = await chrome.tabs.query({});
+  const tabs = await getAllTabs();
   const scoredTabs = [];
 
   for (const tab of tabs) {
@@ -611,6 +664,13 @@ async function notifySidePanel(type, data) {
 
 // Track tab updates
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  // Completed navigations and discard-state flips change findAITab scoring or
+  // make a previously-missing AI reachable — drop the shared snapshot right
+  // away. Other changeInfo fields (title, favicon...) don't affect scoring,
+  // and invalidating on them would let high-frequency noise defeat the TTL.
+  if (changeInfo.status === 'complete' || changeInfo.url || changeInfo.discarded !== undefined) {
+    invalidateTabsSnapshot();
+  }
   if (changeInfo.status === 'complete' && tab.url) {
     const aiType = getAITypeFromUrl(tab.url);
     if (aiType) {
@@ -619,5 +679,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-// No tab-closure tracking needed: findAITab() queries live tabs on every call,
-// and the side panel re-checks its status dots on load and on TAB_STATUS_UPDATE.
+chrome.tabs.onRemoved.addListener(() => {
+  invalidateTabsSnapshot();
+});
+
+// No dot-status closure tracking needed beyond the snapshot invalidation
+// above: findAITab() re-scores live tabs (within a 250ms staleness bound),
+// and the side panel re-checks its status dots on load and on
+// TAB_STATUS_UPDATE.
