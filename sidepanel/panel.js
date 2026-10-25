@@ -523,7 +523,7 @@ async function handleCrossReference(parsed) {
 
   for (const { ai, response } of sourceResponses) {
     if (!response) {
-      log(`Could not get ${ai}'s response`, 'error');
+      log(`Could not get ${getAIName(ai)}'s response`, 'error');
       return false;
     }
   }
@@ -532,7 +532,10 @@ async function handleCrossReference(parsed) {
   let fullMessage = parsed.originalMessage + '\n';
 
   for (const source of sourceResponses) {
-    fullMessage += wrapAiResponse(source.ai, source.response);
+    if (source.response.stale) {
+      log(`注意: ${getAIName(source.ai)} 的回复取自上一轮存档（页面未取到实时内容）`, 'error');
+    }
+    fullMessage += wrapAiResponse(source.ai, source.response.content);
   }
 
   // Send to all target AIs in parallel
@@ -558,12 +561,15 @@ async function handleMutualReview(participants, prompt) {
   }));
 
   for (const { ai, response } of responseEntries) {
-    if (!response || response.trim().length === 0) {
-      log(`[Mutual] Could not get ${ai}'s response - make sure ${ai} has replied first`, 'error');
+    if (!response || response.content.trim().length === 0) {
+      log(`[Mutual] Could not get ${getAIName(ai)}'s response - make sure it has replied first`, 'error');
       return false;
     }
-    responses[ai] = response;
-    log(`[Mutual] Got ${ai}'s response (${response.length} chars)`);
+    if (response.stale) {
+      log(`[Mutual] 注意: ${getAIName(ai)} 的回复取自上一轮存档（页面未取到实时内容）`, 'error');
+    }
+    responses[ai] = response.content;
+    log(`[Mutual] Got ${ai}'s response (${response.content.length} chars)`);
   }
 
   log(`[Mutual] All responses collected. Sending cross-evaluations...`);
@@ -621,7 +627,20 @@ async function handleSummary(parsed) {
     ai,
     response: await getLatestResponse(ai)
   })));
-  const valid = entries.filter(e => e.response && e.response.trim().length > 0);
+  // Drop models without a reply — loudly: a silent drop reads as "no reply
+  // yet" even when the real cause is a dead tab or a broken extractor (the
+  // ChatGPT 2026-10 rework stayed invisible for days behind this filter).
+  const valid = [];
+  for (const e of entries) {
+    if (e.response && e.response.content.trim().length > 0) {
+      if (e.response.stale) {
+        log(`[汇总] 注意: ${getAIName(e.ai)} 的回复取自上一轮存档（页面未取到实时内容）`, 'error');
+      }
+      valid.push({ ai: e.ai, response: e.response.content });
+    } else {
+      log(`[汇总] ${getAIName(e.ai)} 未取到回复（未回答、页面未开或提取器失效），已跳过`, 'error');
+    }
+  }
 
   if (valid.length < 2) {
     log(`[汇总] 至少需要 2 个模型的回复才能汇总（当前有效 ${valid.length} 份）——请确认相关模型已回答过问题`, 'error');
@@ -681,8 +700,23 @@ async function handleCollectReplies() {
     ai,
     response: await getLatestResponse(ai)
   })));
-  // Keep order stable (follow the checkbox order) and drop models without a reply
-  const valid = entries.filter(e => e.response && e.response.trim().length > 0);
+  // Keep order stable (follow the checkbox order) and drop models without a
+  // reply — loudly. A silent drop reads as "no reply yet" even when the real
+  // cause is a dead tab or a broken extractor (the ChatGPT 2026-10 DOM rework
+  // stayed invisible for days behind this filter: ChatGPT just vanished from
+  // the aggregation with no error anywhere).
+  const valid = [];
+  for (const e of entries) {
+    if (e.response && e.response.content.trim().length > 0) {
+      valid.push({
+        ai: e.ai,
+        response: e.response.content,
+        stale: e.response.stale
+      });
+    } else {
+      log(`[聚合] ${getAIName(e.ai)} 未取到回复（未回答、页面未开或提取器失效），已跳过`, 'error');
+    }
+  }
 
   if (valid.length === 0) {
     log('[聚合] 勾选的模型都还没有回复', 'error');
@@ -690,6 +724,10 @@ async function handleCollectReplies() {
   }
 
   renderCollectedReplies(valid);
+  const staleNames = valid.filter(e => e.stale).map(e => getAIName(e.ai));
+  if (staleNames.length > 0) {
+    log(`[聚合] 注意: ${staleNames.join('、')} 的回复取自上一轮存档（页面未取到实时内容）`, 'error');
+  }
   log(`[聚合] 已聚合 ${valid.map(e => getAIName(e.ai)).join('、')} 共 ${valid.length} 份回复`, 'success');
 }
 
@@ -701,7 +739,7 @@ function renderCollectedReplies(validEntries) {
   for (const entry of validEntries) {
     html += `
       <div class="collected-item">
-        <div class="ai-name ${entry.ai}">${getAIName(entry.ai)}</div>
+        <div class="ai-name ${entry.ai}">${getAIName(entry.ai)}${entry.stale ? '<span class="stale-flag">（上一轮存档）</span>' : ''}</div>
         <div class="collected-text">${escapeHtml(entry.response).replace(/\n/g, '<br>')}</div>
       </div>`;
   }
@@ -740,6 +778,10 @@ async function copyCollectedReplies() {
   }
 }
 
+// Returns { content, stale? } for a model that has a reply, or null when it
+// has none. `stale` marks the reply as coming from the background's session
+// fallback (previous round) rather than the live page — the panel surfaces it
+// so an old reply can't quietly pass for the current one.
 async function getLatestResponse(aiType) {
   return new Promise((resolve) => {
     chrome.runtime.sendMessage(
@@ -749,7 +791,10 @@ async function getLatestResponse(aiType) {
           resolve(null); // Background unreachable — treat as no response
           return;
         }
-        resolve(response?.content || null);
+        const content = response?.content || null;
+        if (!content) resolve(null);
+        else if (response.stale) resolve({ content, stale: true });
+        else resolve({ content });
       }
     );
   });
@@ -1117,6 +1162,11 @@ async function handleInterject() {
     btn.disabled = false;
     return;
   }
+  for (const [ai, resp] of [[ai1, ai1Response], [ai2, ai2Response]]) {
+    if (resp.stale) {
+      log(`[插话] 注意: ${getAIName(ai)} 的回复取自上一轮存档（页面未取到实时内容）`, 'error');
+    }
+  }
 
   log(`[插话] 已获取双方回复，正在发送...`);
 
@@ -1124,13 +1174,13 @@ async function handleInterject() {
   const msg1 = `${message}
 
 以下是 ${getAIName(ai2)} 的最新回复：
-${wrapAiResponse(ai2, ai2Response)}`;
+${wrapAiResponse(ai2, ai2Response.content)}`;
 
   // Send to AI2: user message + AI1's response
   const msg2 = `${message}
 
 以下是 ${getAIName(ai1)} 的最新回复：
-${wrapAiResponse(ai1, ai1Response)}`;
+${wrapAiResponse(ai1, ai1Response.content)}`;
 
   await Promise.all([
     sendToAI(ai1, msg1),
@@ -1709,13 +1759,19 @@ async function startPersonaDebate() {
   // Save mapping for next session
   saveRoleAIMap();
 
+  // Fan-out safety net (same as normal mode's handleSend): open tabs for any
+  // mapped model that has none. Without this a missing tab made every turn
+  // fail at sendToAI — and before the sendAndWait fast-fail it hung the whole
+  // debate for 10 minutes per turn.
+  const debateAIs = [...new Set(Object.values(personaDebateState.roleAIMap))];
+  await ensureTabsOpen(debateAIs);
+
   // Upload selected files to all mapped AIs first (encoded once)
   const filesToSend = [...selectedFiles];
   if (filesToSend.length > 0) {
-    const uniqueAIs = [...new Set(Object.values(personaDebateState.roleAIMap))];
-    log(`正在上传 ${filesToSend.length} 个文件到 ${uniqueAIs.length} 个模型...`);
+    log(`正在上传 ${filesToSend.length} 个文件到 ${debateAIs.length} 个模型...`);
     const encoded = await Promise.all(filesToSend.map(readFileAsBase64));
-    await Promise.all(uniqueAIs.map(ai => sendEncodedFilesToAI(ai, encoded)));
+    await Promise.all(debateAIs.map(ai => sendEncodedFilesToAI(ai, encoded)));
     clearFiles();
     // Wait a bit for files to be processed before starting the debate
     await new Promise(r => setTimeout(r, 500));
@@ -1780,8 +1836,19 @@ function sendAndWait(aiType, message) {
     };
     chrome.runtime.onMessage.addListener(handler);
 
-    // Trigger the send (reuses existing sendToAI)
-    sendToAI(aiType, message).catch((err) => {
+    // Trigger the send (reuses existing sendToAI). sendToAI resolves — never
+    // rejects — with {success:false} on failure (missing tab, injection
+    // error...). Without this check a failed send left the debate hanging on
+    // the full 620s timeout per turn.
+    sendToAI(aiType, message).then((result) => {
+      if (!settled && result && result.success === false) {
+        settled = true;
+        clearTimeout(timeout);
+        clearInterval(abortChecker);
+        chrome.runtime.onMessage.removeListener(handler);
+        reject(new Error(`发送给 ${getAIName(aiType)} 失败: ${result.error || '未知错误'}`));
+      }
+    }).catch((err) => {
       if (!settled) {
         settled = true;
         clearTimeout(timeout);

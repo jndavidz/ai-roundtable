@@ -1416,6 +1416,16 @@ header .subtitle {
   letter-spacing: 0.5px;
 }
 
+/* Marks a reply that came from the background's session fallback (previous
+   round) rather than the live page — see getResponseFromContentScript. */
+.collected-item .ai-name .stale-flag {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--warning, #d97706);
+  margin-left: 6px;
+}
+
 .collected-text {
   font-size: 13px;
   line-height: 1.65;
