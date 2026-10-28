@@ -86,6 +86,11 @@
       }
       var clone = container.cloneNode(true);
       clone.querySelectorAll('style, script').forEach(function (el) { el.remove(); });
+      // 回复上方有一行状态按钮(「共用时 10 分 23 秒」, 深度思考时是
+      // 「已深度思考（用时 X 秒）」), 它在容器内且 toMarkdown 后紧贴正文首行,
+      // 会被聚合当成答案一起带走——按结构移除整行。
+      clone.querySelectorAll('[data-track-name="chat_react_status"], [class*="statusRow"]')
+        .forEach(function (el) { el.remove(); });
       var md = window.AIPanelDom && window.AIPanelDom.toMarkdown
         ? window.AIPanelDom.toMarkdown(clone)
         : (clone.innerText || '');
